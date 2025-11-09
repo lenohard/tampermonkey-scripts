@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HN Algolia - Expand Date Range Options
 // @namespace    http://tampermonkey.net/
-// @version      2.0
+// @version      2.1
 // @description  Add quick date range buttons (Last 2/3/4 days) to HN Algolia search
 // @author       You
 // @match        https://hn.algolia.com/*
@@ -67,27 +67,15 @@
       return;
     }
 
-    // Find the dropdown button itself by looking for buttons with date-related text
-    let dropdownButton = null;
-    const buttons = document.querySelectorAll('button');
-
-    for (const btn of buttons) {
-      const text = btn.textContent;
-      if (text.includes('Last 24h') ||
-          text.includes('All time') ||
-          text.includes('Past Week') ||
-          text.includes('Past Month') ||
-          text.includes('Past Year')) {
-        dropdownButton = btn;
-        console.log(`[HN Algolia] Found dropdown button with text: "${text.trim()}"`);
-        break;
-      }
-    }
+    // Find the dropdown button by looking for the SearchFilters_menuButton class
+    let dropdownButton = document.querySelector('button.SearchFilters_menuButton');
 
     if (!dropdownButton) {
-      console.warn('[HN Algolia] Could not find dropdown button - retrying later');
+      console.warn('[HN Algolia] Could not find SearchFilters_menuButton - retrying later');
       return;
     }
+
+    console.log('[HN Algolia] Found dropdown button with class: SearchFilters_menuButton');
 
     // Get the parent container
     const container = dropdownButton.parentElement;
