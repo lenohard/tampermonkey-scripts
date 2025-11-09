@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HN Algolia - Expand Date Range Options
 // @namespace    http://tampermonkey.net/
-// @version      2.2
+// @version      2.3
 // @description  Add quick date range buttons (Last 2/3/4 days) to HN Algolia search
 // @author       You
 // @match        https://hn.algolia.com/*
@@ -96,30 +96,43 @@
       const btn = document.createElement('button');
       btn.textContent = range.label;
       btn.style.cssText = `
-        padding: 6px 12px;
-        border: 1px solid #ccc;
-        border-radius: 4px;
-        background: white;
+        padding: 8px 16px;
+        border: 1px solid #d0d0d0;
+        border-radius: 5px;
+        background: #ffffff;
         cursor: pointer;
         font-size: 14px;
-        transition: all 0.2s;
+        font-weight: 500;
+        transition: all 0.15s ease;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+        white-space: nowrap;
       `;
 
       btn.addEventListener('mouseover', () => {
-        btn.style.backgroundColor = '#f0f0f0';
-        btn.style.borderColor = '#999';
+        btn.style.backgroundColor = '#f5f5f5';
+        btn.style.borderColor = '#888';
+        btn.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.1)';
       });
 
       btn.addEventListener('mouseout', () => {
-        btn.style.backgroundColor = 'white';
-        btn.style.borderColor = '#ccc';
+        btn.style.backgroundColor = '#ffffff';
+        btn.style.borderColor = '#d0d0d0';
+        btn.style.boxShadow = '0 1px 2px rgba(0, 0, 0, 0.05)';
+      });
+
+      btn.addEventListener('active', () => {
+        btn.style.backgroundColor = '#e8e8e8';
+        btn.style.transform = 'scale(0.98)';
       });
 
       btn.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
-        updateDateRange(range.days);
+        btn.style.opacity = '0.7';
+        setTimeout(() => {
+          updateDateRange(range.days);
+        }, 100);
       });
 
       buttonGroup.appendChild(btn);
