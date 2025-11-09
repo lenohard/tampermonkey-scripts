@@ -6,6 +6,8 @@
 // @author       You
 // @match        *://movie.douban.com/subject/*
 // @grant        none
+// @updateURL    https://raw.githubusercontent.com/lenohard/tampermonkey-scripts/main/douban2pp.js
+// @downloadURL  https://raw.githubusercontent.com/lenohard/tampermonkey-scripts/main/douban2pp.js
 // ==/UserScript==
 (function () {
     var host = location.hostname;

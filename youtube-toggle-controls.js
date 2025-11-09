@@ -6,6 +6,8 @@
 // @author       Your Name
 // @match        https://www.youtube.com/*
 // @grant        none
+// @updateURL    https://raw.githubusercontent.com/lenohard/tampermonkey-scripts/main/youtube-toggle-controls.js
+// @downloadURL  https://raw.githubusercontent.com/lenohard/tampermonkey-scripts/main/youtube-toggle-controls.js
 // ==/UserScript==
 
 (function () {

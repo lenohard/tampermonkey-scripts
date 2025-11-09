@@ -12,6 +12,8 @@
 // @grant        GM_getValue
 // @grant        GM_xmlhttpRequest
 // @grant        GM_openInTab
+// @updateURL    https://raw.githubusercontent.com/lenohard/tampermonkey-scripts/main/youtube-downloader.js
+// @downloadURL  https://raw.githubusercontent.com/lenohard/tampermonkey-scripts/main/youtube-downloader.js
 // ==/UserScript==
 
 (function() {

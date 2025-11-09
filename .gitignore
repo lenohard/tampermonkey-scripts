@@ -37,3 +37,6 @@ Temporary Items
 
 # Aider chat history
 .aider*
+
+# Private scripts
+mify-tenant-id-copier.js

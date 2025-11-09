@@ -48,8 +48,8 @@
 为了启用自动更新功能，请在脚本的 UserScript 头部添加：
 
 ```javascript
-// @updateURL    https://raw.githubusercontent.com/your-username/tampermonkey-scripts/main/script-name.js
-// @downloadURL  https://raw.githubusercontent.com/your-username/tampermonkey-scripts/main/script-name.js
+// @updateURL    https://raw.githubusercontent.com/lenohard/tampermonkey-scripts/main/script-name.js
+// @downloadURL  https://raw.githubusercontent.com/lenohard/tampermonkey-scripts/main/script-name.js
 ```
 
 ## 📋 使用说明

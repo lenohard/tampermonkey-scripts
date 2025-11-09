@@ -10,6 +10,8 @@
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @connect      music-api.gdstudio.xyz
+// @updateURL    https://raw.githubusercontent.com/lenohard/tampermonkey-scripts/main/netease_downloader.js
+// @downloadURL  https://raw.githubusercontent.com/lenohard/tampermonkey-scripts/main/netease_downloader.js
 // ==/UserScript==
 
 (function() {

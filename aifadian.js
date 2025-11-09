@@ -1,14 +1,17 @@
 // ==UserScript==
-// @name         爱发电音频下载助手
+// @name         爱发电&四季办公室音频下载助手
 // @namespace    http://tampermonkey.net/
-// @version      1.0
-// @description  从爱发电专辑页面提取音频并提供下载功能
+// @version      1.1
+// @description  从爱发电专辑页面和四季办公室(siji.typlog.io)提取音频并提供下载功能
 // @author       Your name
 // @match        https://afdian.com/album/*
+// @match        https://siji.typlog.io/episodes/*
 // @grant        GM_download
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_xmlhttpRequest
+// @updateURL    https://raw.githubusercontent.com/lenohard/tampermonkey-scripts/main/aifadian.js
+// @downloadURL  https://raw.githubusercontent.com/lenohard/tampermonkey-scripts/main/aifadian.js
 // ==/UserScript==
 
 (function() {
@@ -17,6 +20,19 @@
     let audioList = [];
     let albumTitle = '';
     let parentFolderName = '';
+    let currentSite = '';
+
+    // 检测当前网站
+    function detectSite() {
+        const hostname = window.location.hostname;
+        if (hostname.includes('afdian.com')) {
+            currentSite = 'afdian';
+        } else if (hostname.includes('siji.typlog.io')) {
+            currentSite = 'siji';
+        }
+        console.log('检测到网站:', currentSite);
+        return currentSite;
+    }
 
     // 等待元素加载
     function waitForElement(selector, timeout = 10000) {
@@ -193,6 +209,10 @@
 
     // 获取父文件夹名称
     function getParentFolderName() {
+        if (currentSite === 'siji') {
+            return '四季办公室';
+        }
+
         try {
             const parentElement = document.querySelector('#app > div.wrapper.app-view > div > section.page-content-w100 > div > div.content-left.max-width-320 > div > section > div.flex-box.flex-center.flex-align-items-center.mt16 > div > div.flex-box.flex-justify-content-center.flex-direction-column.avatar-content.flex-item-1 > div.user-name.flex-box.flex-justify-content-space-between.flex-align-items-center > span > a');
             return parentElement ? parentElement.textContent.trim() : '未知作者';
@@ -204,6 +224,27 @@
 
     // 获取专辑标题
     function getAlbumTitle() {
+        if (currentSite === 'siji') {
+            try {
+                // 尝试从title元素获取
+                const titleElement = document.querySelector('.shk-title');
+                if (titleElement) {
+                    return titleElement.textContent.trim();
+                }
+
+                // 或者从页面标题获取
+                const pageTitle = document.title;
+                if (pageTitle && pageTitle !== '四季办公室') {
+                    return pageTitle.replace(' - 四季办公室', '').trim();
+                }
+
+                return '未知音频';
+            } catch (error) {
+                console.error('获取四季办公室标题失败:', error);
+                return '未知音频';
+            }
+        }
+
         try {
             const albumElement = document.querySelector('#app > div.wrapper.app-view > div > section.page-content-w100 > div > div.content-left.max-width-320 > div > section > a');
             return albumElement ? albumElement.textContent.trim() : '未知专辑';
@@ -219,6 +260,54 @@
         parentFolderName = getParentFolderName();
         albumTitle = getAlbumTitle();
 
+        if (currentSite === 'siji') {
+            extractSijiAudioInfo();
+        } else if (currentSite === 'afdian') {
+            extractAfdianAudioInfo();
+        }
+    }
+
+    // 提取四季办公室音频信息
+    function extractSijiAudioInfo() {
+        try {
+            // 查找下载链接
+            const downloadLink = document.querySelector('.shk-btn_download');
+            if (!downloadLink) {
+                console.error('未找到音频下载链接');
+                return;
+            }
+
+            const audioUrl = downloadLink.href;
+            if (!audioUrl) {
+                console.error('下载链接为空');
+                return;
+            }
+
+            // 获取音频标题
+            const titleElement = document.querySelector('.shk-title');
+            const title = titleElement ? titleElement.textContent.trim() : '未知音频';
+
+            // 获取作者
+            const artistElement = document.querySelector('.shk-artist');
+            const artist = artistElement ? artistElement.textContent.trim() : '';
+
+            const finalTitle = artist ? `${artist} - ${title}` : title;
+
+            audioList.push({
+                title: finalTitle,
+                url: audioUrl,
+                element: null, // 四季办公室没有audio元素
+                index: 1
+            });
+
+            console.log('成功提取四季办公室音频:', finalTitle, audioUrl);
+        } catch (error) {
+            console.error('提取四季办公室音频信息失败:', error);
+        }
+    }
+
+    // 提取爱发电音频信息
+    function extractAfdianAudioInfo() {
         try {
             const feedContainer = document.querySelector('.vm-block-feed');
             if (!feedContainer) {
@@ -237,7 +326,7 @@
 
                     // 获取音频元素 - 使用更灵活的查找方式
                     let audioElement = null;
-                    
+
                     // 尝试多种选择器
                     const selectors = [
                         '.vm-audio-player audio',
@@ -294,7 +383,13 @@
             const sanitizedParentFolder = parentFolderName.replace(/[\/\\:*?"<>|]/g, '-');
             const sanitizedAlbumTitle = albumTitle.replace(/[\/\\:*?"<>|]/g, '-');
             const sanitizedTitle = audioInfo.title.replace(/[\/\\:*?"<>|]/g, '-');
-            const filename = `爱发电音频/${sanitizedParentFolder}/${sanitizedAlbumTitle}/${sanitizedTitle}.mp3`;
+
+            let filename;
+            if (currentSite === 'siji') {
+                filename = `四季办公室/${sanitizedTitle}.mp3`;
+            } else {
+                filename = `爱发电音频/${sanitizedParentFolder}/${sanitizedAlbumTitle}/${sanitizedTitle}.mp3`;
+            }
 
             showStatus(`开始下载: ${audioInfo.title}`, 'info');
 
@@ -304,7 +399,11 @@
                 saveAs: false,
                 onload: function() {
                     showStatus(`✅ 下载完成: ${audioInfo.title}`, 'success');
-                    showStatus(`📁 保存位置: 下载文件夹/爱发电音频/${sanitizedParentFolder}/${sanitizedAlbumTitle}/`, 'info');
+                    if (currentSite === 'siji') {
+                        showStatus(`📁 保存位置: 下载文件夹/四季办公室/`, 'info');
+                    } else {
+                        showStatus(`📁 保存位置: 下载文件夹/爱发电音频/${sanitizedParentFolder}/${sanitizedAlbumTitle}/`, 'info');
+                    }
                 },
                 onerror: function(error) {
                     showStatus(`❌ 下载失败: ${audioInfo.title} - ${error.message}`, 'error');
@@ -324,7 +423,13 @@
                 const sanitizedParentFolder = parentFolderName.replace(/[\/\\:*?"<>|]/g, '-');
                 const sanitizedAlbumTitle = albumTitle.replace(/[\/\\:*?"<>|]/g, '-');
                 const sanitizedTitle = audioInfo.title.replace(/[\/\\:*?"<>|]/g, '-');
-                const filename = `爱发电音频/${sanitizedParentFolder}/${sanitizedAlbumTitle}/${sanitizedTitle}.mp3`;
+
+                let filename;
+                if (currentSite === 'siji') {
+                    filename = `四季办公室/${sanitizedTitle}.mp3`;
+                } else {
+                    filename = `爱发电音频/${sanitizedParentFolder}/${sanitizedAlbumTitle}/${sanitizedTitle}.mp3`;
+                }
 
                 GM_download({
                     url: audioInfo.url,
@@ -358,7 +463,12 @@
         const sanitizedParentFolder = parentFolderName.replace(/[\/\\:*?"<>|]/g, '-');
         const sanitizedAlbumTitle = albumTitle.replace(/[\/\\:*?"<>|]/g, '-');
         showStatus(`🚀 开始批量下载 ${audioList.length} 个音频...`, 'info');
-        showStatus(`📁 文件将保存到: 下载文件夹/爱发电音频/${sanitizedParentFolder}/${sanitizedAlbumTitle}/`, 'info');
+
+        if (currentSite === 'siji') {
+            showStatus(`📁 文件将保存到: 下载文件夹/四季办公室/`, 'info');
+        } else {
+            showStatus(`📁 文件将保存到: 下载文件夹/爱发电音频/${sanitizedParentFolder}/${sanitizedAlbumTitle}/`, 'info');
+        }
 
         for (let i = 0; i < audioList.length; i++) {
             const audioInfo = audioList[i];
@@ -395,7 +505,11 @@
         // 下载路径提示
         const pathInfo = document.createElement('div');
         pathInfo.className = 'status-message status-info';
-        pathInfo.innerHTML = `📁 下载路径: 浏览器下载文件夹/爱发电音频/${parentFolderName.replace(/[\/\\:*?"<>|]/g, '-')}/${albumTitle.replace(/[\/\\:*?"<>|]/g, '-')}/`;
+        if (currentSite === 'siji') {
+            pathInfo.innerHTML = `📁 下载路径: 浏览器下载文件夹/四季办公室/`;
+        } else {
+            pathInfo.innerHTML = `📁 下载路径: 浏览器下载文件夹/爱发电音频/${parentFolderName.replace(/[\/\\:*?"<>|]/g, '-')}/${albumTitle.replace(/[\/\\:*?"<>|]/g, '-')}/`;
+        }
         content.appendChild(pathInfo);
 
         // 批量下载按钮
@@ -428,14 +542,16 @@
             const controls = document.createElement('div');
             controls.className = 'audio-controls';
 
-            const playBtn = document.createElement('button');
-            playBtn.className = 'play-btn';
-            playBtn.textContent = '播放';
-            playBtn.addEventListener('click', () => {
-                if (audioInfo.element) {
+            // 只有在有音频元素时才显示播放按钮
+            if (audioInfo.element) {
+                const playBtn = document.createElement('button');
+                playBtn.className = 'play-btn';
+                playBtn.textContent = '播放';
+                playBtn.addEventListener('click', () => {
                     audioInfo.element.play();
-                }
-            });
+                });
+                controls.appendChild(playBtn);
+            }
 
             const downloadBtn = document.createElement('button');
             downloadBtn.className = 'download-btn';
@@ -444,7 +560,6 @@
                 downloadAudio(audioInfo);
             });
 
-            controls.appendChild(playBtn);
             controls.appendChild(downloadBtn);
 
             item.appendChild(title);
@@ -509,20 +624,14 @@
     // 初始化
     async function init() {
         try {
-            console.log('爱发电音频下载助手启动...');
+            detectSite();
+            console.log(`音频下载助手启动... 当前网站: ${currentSite}`);
 
-            // 等待页面加载完成
-            await waitForElement('.vm-block-feed', 15000);
+            if (currentSite === 'siji') {
+                // 四季办公室：等待音频播放器加载
+                await waitForElement('.shk-btn_download', 15000);
 
-            // 自动滚动加载所有内容
-            console.log('开始滚动页面以加载所有音频...');
-            console.log('当前URL:', window.location.href);
-            
-            await scrollToLoadAll();
-
-            // 等待一下让最后的音频元素完全加载
-            setTimeout(() => {
-                console.log('滚动完成，开始提取音频信息...');
+                console.log('四季办公室音频播放器加载完成，开始提取音频信息...');
                 extractAudioInfo();
 
                 if (audioList.length > 0) {
@@ -531,10 +640,36 @@
                     showStatus(`发现 ${audioList.length} 个音频文件`, 'success');
                 } else {
                     console.log('未找到音频文件，检查页面结构...');
-                    console.log('音频容器元素:', document.querySelector('.vm-block-feed'));
-                    console.log('音频feed元素:', document.querySelectorAll('.vm-feed').length);
+                    console.log('下载链接元素:', document.querySelector('.shk-btn_download'));
                 }
-            }, 2000);
+            } else if (currentSite === 'afdian') {
+                // 爱发电：等待页面加载完成
+                await waitForElement('.vm-block-feed', 15000);
+
+                // 自动滚动加载所有内容
+                console.log('开始滚动页面以加载所有音频...');
+                console.log('当前URL:', window.location.href);
+
+                await scrollToLoadAll();
+
+                // 等待一下让最后的音频元素完全加载
+                setTimeout(() => {
+                    console.log('滚动完成，开始提取音频信息...');
+                    extractAudioInfo();
+
+                    if (audioList.length > 0) {
+                        console.log(`成功提取 ${audioList.length} 个音频文件`);
+                        createDownloadPanel();
+                        showStatus(`发现 ${audioList.length} 个音频文件`, 'success');
+                    } else {
+                        console.log('未找到音频文件，检查页面结构...');
+                        console.log('音频容器元素:', document.querySelector('.vm-block-feed'));
+                        console.log('音频feed元素:', document.querySelectorAll('.vm-feed').length);
+                    }
+                }, 2000);
+            } else {
+                console.log('未识别的网站，无法处理');
+            }
 
         } catch (error) {
             console.error('初始化失败:', error);
@@ -548,5 +683,4 @@
         init();
     }
 })();
-
 
