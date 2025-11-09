@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HN Algolia - Expand Date Range Options
 // @namespace    http://tampermonkey.net/
-// @version      1.3
-// @description  Add quick date range options (Last 2/3/4 days) to HN Algolia search
+// @version      2.0
+// @description  Add quick date range buttons (Last 2/3/4 days) to HN Algolia search
 // @author       You
 // @match        https://hn.algolia.com/*
 // @grant        none
@@ -20,272 +20,140 @@
     { label: 'Last 4 days', days: 4 }
   ];
 
-  // Utility function to calculate date N days ago
-  function getDateNDaysAgo(days) {
+  // Get Unix timestamp for N days ago
+  function getTimestampNDaysAgo(days) {
     const date = new Date();
     date.setDate(date.getDate() - days);
-    return date;
+    date.setHours(0, 0, 0, 0); // Start of day
+    return Math.floor(date.getTime() / 1000);
   }
 
-  // Utility function to format date as MM/DD/YYYY
-  function formatDate(date) {
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    const year = date.getFullYear();
-    return `${month}/${day}/${year}`;
+  // Get Unix timestamp for today (end of day)
+  function getTodayTimestamp() {
+    const date = new Date();
+    date.setHours(23, 59, 59, 999);
+    return Math.floor(date.getTime() / 1000);
   }
 
-  // Handle click on new date range option
-  function handleDateRangeClick(days) {
-    return function(e) {
-      e.preventDefault();
-      e.stopPropagation();
-      console.log(`[HN Algolia] Clicked: Last ${days} days`);
+  // Update URL with new date range parameters
+  function updateDateRange(days) {
+    console.log(`[HN Algolia] Applying: Last ${days} days`);
 
-      // Calculate the date range
-      const endDate = new Date();
-      const startDate = getDateNDaysAgo(days);
+    const dateStart = getTimestampNDaysAgo(days);
+    const dateEnd = getTodayTimestamp();
 
-      const startFormatted = formatDate(startDate);
-      const endFormatted = formatDate(endDate);
+    // Get current URL
+    const url = new URL(window.location);
 
-      console.log(`[HN Algolia] Date range: ${startFormatted} to ${endFormatted}`);
+    // Update parameters
+    url.searchParams.set('dateStart', dateStart);
+    url.searchParams.set('dateEnd', dateEnd);
+    url.searchParams.set('dateRange', 'custom');
+    url.searchParams.set('page', '0'); // Reset to first page
 
-      // Find and click the "Custom range" button to open the date picker
-      const customRangeButton = findCustomRangeButton();
-      if (!customRangeButton) {
-        console.error('[HN Algolia] Could not find Custom range button');
-        return;
-      }
+    console.log(`[HN Algolia] New URL: ${url.toString()}`);
 
-      // Click to open custom range dialog
-      customRangeButton.click();
-
-      // Wait for dialog to open and fill in dates
-      setTimeout(() => {
-        fillDatePickerAndSubmit(startFormatted, endFormatted);
-      }, 300);
-    };
+    // Navigate to new URL
+    window.location.href = url.toString();
   }
 
-  // Find the custom range button in the dropdown
-  function findCustomRangeButton() {
-    const listbox = document.querySelector('[role="listbox"]');
-    if (!listbox) return null;
+  // Create custom date range buttons
+  function createCustomButtons() {
+    console.log('[HN Algolia] Creating custom date range buttons');
 
-    const buttons = listbox.querySelectorAll('button');
-    for (const button of buttons) {
-      if (button.textContent.trim() === 'Custom range') {
-        return button;
-      }
-    }
-    return null;
-  }
-
-  // Fill in the date picker and submit
-  function fillDatePickerAndSubmit(startDate, endDate) {
-    console.log(`[HN Algolia] Attempting to fill date picker with ${startDate} to ${endDate}`);
-
-    // Wait for dialog to be visible
-    setTimeout(() => {
-      // Try multiple selectors for date inputs
-      let inputs = document.querySelectorAll('input[type="date"]');
-
-      if (inputs.length < 2) {
-        inputs = document.querySelectorAll('input[placeholder*="date" i]');
-      }
-
-      if (inputs.length < 2) {
-        inputs = document.querySelectorAll('input[type="text"]');
-      }
-
-      console.log(`[HN Algolia] Found ${inputs.length} input fields`);
-
-      if (inputs.length >= 2) {
-        // Fill start date
-        inputs[0].focus();
-        inputs[0].value = startDate;
-        inputs[0].dispatchEvent(new Event('change', { bubbles: true }));
-        inputs[0].dispatchEvent(new Event('input', { bubbles: true }));
-
-        // Fill end date
-        inputs[1].focus();
-        inputs[1].value = endDate;
-        inputs[1].dispatchEvent(new Event('change', { bubbles: true }));
-        inputs[1].dispatchEvent(new Event('input', { bubbles: true }));
-
-        console.log(`[HN Algolia] Filled dates: ${startDate} to ${endDate}`);
-
-        // Look for apply/submit button and click it
-        setTimeout(() => {
-          const buttons = document.querySelectorAll('button');
-          for (const btn of buttons) {
-            const text = btn.textContent.trim().toLowerCase();
-            if (text === 'apply' || text === 'ok' || text === 'search' || text === 'submit') {
-              console.log(`[HN Algolia] Clicking button: ${text}`);
-              btn.click();
-              break;
-            }
-          }
-        }, 200);
-      } else {
-        console.warn('[HN Algolia] Could not find date input fields');
-      }
-    }, 400);
-  }
-
-  // Inject new options into the dropdown
-  function injectDateRangeOptions() {
-    // Find the listbox (dropdown list)
-    const listbox = document.querySelector('[role="listbox"]');
-    if (!listbox) {
-      console.log('[HN Algolia] Listbox not found');
+    // Check if buttons already exist
+    if (document.getElementById('hn-algolia-custom-dates')) {
+      console.log('[HN Algolia] Buttons already exist, skipping');
       return;
     }
 
-    // Check if we've already injected these options to avoid duplicates
-    if (listbox.querySelector('[data-hn-custom-range]')) {
-      console.log('[HN Algolia] Options already injected, skipping');
-      return;
-    }
+    // Find the dropdown button itself by looking for buttons with date-related text
+    let dropdownButton = null;
+    const buttons = document.querySelectorAll('button');
 
-    // Find all list items with role="option"
-    let listItems = listbox.querySelectorAll('li[role="option"]');
-    console.log(`[HN Algolia] Found ${listItems.length} list items`);
-
-    // If no items found, try finding ALL li elements
-    if (listItems.length === 0) {
-      listItems = listbox.querySelectorAll('li');
-      console.log(`[HN Algolia] Fallback: Found ${listItems.length} li elements`);
-    }
-
-    if (listItems.length === 0) {
-      console.warn('[HN Algolia] No list items found - trying to inspect listbox');
-      console.log('Listbox HTML:', listbox.innerHTML);
-      console.log('Listbox children:', listbox.children.length);
-      return;
-    }
-
-    // Find the custom range list item
-    let customRangeItem = null;
-    for (const item of listItems) {
-      const button = item.querySelector('button');
-      if (button && button.textContent.includes('Custom range')) {
-        customRangeItem = item;
+    for (const btn of buttons) {
+      const text = btn.textContent;
+      if (text.includes('Last 24h') ||
+          text.includes('All time') ||
+          text.includes('Past Week') ||
+          text.includes('Past Month') ||
+          text.includes('Past Year')) {
+        dropdownButton = btn;
+        console.log(`[HN Algolia] Found dropdown button with text: "${text.trim()}"`);
         break;
       }
     }
 
-    if (!customRangeItem) {
-      console.warn('[HN Algolia] Could not find Custom range option');
+    if (!dropdownButton) {
+      console.warn('[HN Algolia] Could not find dropdown button - retrying later');
       return;
     }
 
-    console.log('[HN Algolia] Found Custom range option, injecting new options before it');
+    // Get the parent container
+    const container = dropdownButton.parentElement;
 
-    // Create and inject new options
+    // Create a wrapper div for our custom buttons
+    const buttonGroup = document.createElement('div');
+    buttonGroup.id = 'hn-algolia-custom-dates';
+    buttonGroup.style.cssText = `
+      display: flex;
+      gap: 8px;
+      margin-left: 12px;
+      flex-wrap: wrap;
+      align-items: center;
+    `;
+
+    // Create buttons for each date range
     NEW_DATE_RANGES.forEach((range) => {
-      const li = document.createElement('li');
-      li.setAttribute('data-hn-custom-range', 'true');
-      li.setAttribute('role', 'option');
-      li.setAttribute('aria-selected', 'false');
-      li.setAttribute('tabindex', '1');
+      const btn = document.createElement('button');
+      btn.textContent = range.label;
+      btn.style.cssText = `
+        padding: 6px 12px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        background: white;
+        cursor: pointer;
+        font-size: 14px;
+        transition: all 0.2s;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      `;
 
-      // Copy classes from custom range item
-      li.className = customRangeItem.className;
+      btn.addEventListener('mouseover', () => {
+        btn.style.backgroundColor = '#f0f0f0';
+        btn.style.borderColor = '#999';
+      });
 
-      const button = document.createElement('button');
-      button.textContent = range.label;
+      btn.addEventListener('mouseout', () => {
+        btn.style.backgroundColor = 'white';
+        btn.style.borderColor = '#ccc';
+      });
 
-      button.addEventListener('click', handleDateRangeClick(range.days));
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        updateDateRange(range.days);
+      });
 
-      li.appendChild(button);
-      customRangeItem.parentNode.insertBefore(li, customRangeItem);
-
-      console.log(`[HN Algolia] Injected: ${range.label}`);
+      buttonGroup.appendChild(btn);
     });
 
-    console.log('[HN Algolia] Successfully injected new date range options');
+    // Insert after the dropdown button's parent
+    container.parentNode.insertBefore(buttonGroup, container.nextSibling);
+
+    console.log('[HN Algolia] Custom date range buttons created successfully');
   }
 
-  // Wait for list items to appear in listbox
-  function waitForListItems(maxAttempts = 20) {
-    return new Promise((resolve) => {
-      let attempts = 0;
-
-      const checkListItems = () => {
-        const listbox = document.querySelector('[role="listbox"]');
-        const listItems = listbox ? listbox.querySelectorAll('li[role="option"]') : [];
-
-        attempts++;
-        console.log(`[HN Algolia] Attempt ${attempts}: Found ${listItems.length} list items`);
-
-        if (listItems.length > 0) {
-          console.log('[HN Algolia] List items found, proceeding');
-          resolve(true);
-        } else if (attempts < maxAttempts) {
-          // Keep checking every 50ms
-          setTimeout(checkListItems, 50);
-        } else {
-          console.warn('[HN Algolia] Timeout waiting for list items');
-          resolve(false);
-        }
-      };
-
-      checkListItems();
-    });
-  }
-
-  // Observer to detect when dropdown opens/closes
-  function observeDropdownChanges() {
-    const observerCallback = (mutations) => {
-      for (const mutation of mutations) {
-        // Check for class changes that might indicate dropdown opening
-        if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
-          if (mutation.target.classList && mutation.target.classList.contains('Dropdown_list--open')) {
-            console.log('[HN Algolia] Dropdown opened (class change detected)');
-
-            // Wait for list items to appear, then inject
-            waitForListItems().then((success) => {
-              if (success) {
-                injectDateRangeOptions();
-              }
-            });
-          }
-        }
-
-        // Also watch for new list items being added to existing listbox
-        if (mutation.type === 'childList') {
-          if (mutation.target.getAttribute && mutation.target.getAttribute('role') === 'listbox') {
-            // List items were just added to the listbox
-            if (mutation.target.querySelectorAll('li[role="option"]').length > 0) {
-              console.log('[HN Algolia] List items added to listbox');
-              injectDateRangeOptions();
-            }
-          }
-        }
-      }
-    };
-
-    const observer = new MutationObserver(observerCallback);
-
-    // Start observing the document for changes
-    observer.observe(document.body, {
-      attributes: true,
-      childList: true,
-      subtree: true,
-      attributeFilter: ['class']
-    });
-
-    console.log('[HN Algolia] Observer started - watching for dropdown changes');
-  }
-
-  // Initial setup
+  // Wait for page to be ready and create buttons
   function init() {
     console.log('[HN Algolia] Script initialized');
 
-    // Start observing for dropdown changes
-    observeDropdownChanges();
+    // Try to create buttons immediately
+    createCustomButtons();
+
+    // Also try again after delays in case page wasn't ready
+    setTimeout(createCustomButtons, 500);
+    setTimeout(createCustomButtons, 1000);
+    setTimeout(createCustomButtons, 2000);
   }
 
   // Start when DOM is ready
