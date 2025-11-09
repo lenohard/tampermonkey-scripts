@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HN Algolia - Expand Date Range Options
 // @namespace    http://tampermonkey.net/
-// @version      1.2
+// @version      1.3
 // @description  Add quick date range options (Last 2/3/4 days) to HN Algolia search
 // @author       You
 // @match        https://hn.algolia.com/*
@@ -150,13 +150,27 @@
     }
 
     // Find all list items with role="option"
-    const listItems = listbox.querySelectorAll('li[role="option"]');
+    let listItems = listbox.querySelectorAll('li[role="option"]');
     console.log(`[HN Algolia] Found ${listItems.length} list items`);
+
+    // If no items found, try finding ALL li elements
+    if (listItems.length === 0) {
+      listItems = listbox.querySelectorAll('li');
+      console.log(`[HN Algolia] Fallback: Found ${listItems.length} li elements`);
+    }
+
+    if (listItems.length === 0) {
+      console.warn('[HN Algolia] No list items found - trying to inspect listbox');
+      console.log('Listbox HTML:', listbox.innerHTML);
+      console.log('Listbox children:', listbox.children.length);
+      return;
+    }
 
     // Find the custom range list item
     let customRangeItem = null;
     for (const item of listItems) {
-      if (item.textContent.includes('Custom range')) {
+      const button = item.querySelector('button');
+      if (button && button.textContent.includes('Custom range')) {
         customRangeItem = item;
         break;
       }
@@ -170,7 +184,7 @@
     console.log('[HN Algolia] Found Custom range option, injecting new options before it');
 
     // Create and inject new options
-    NEW_DATE_RANGES.forEach((range, index) => {
+    NEW_DATE_RANGES.forEach((range) => {
       const li = document.createElement('li');
       li.setAttribute('data-hn-custom-range', 'true');
       li.setAttribute('role', 'option');
@@ -187,6 +201,8 @@
 
       li.appendChild(button);
       customRangeItem.parentNode.insertBefore(li, customRangeItem);
+
+      console.log(`[HN Algolia] Injected: ${range.label}`);
     });
 
     console.log('[HN Algolia] Successfully injected new date range options');
