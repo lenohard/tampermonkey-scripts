@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HN Algolia - Expand Date Range Options
 // @namespace    http://tampermonkey.net/
-// @version      1.1
+// @version      1.2
 // @description  Add quick date range options (Last 2/3/4 days) to HN Algolia search
 // @author       You
 // @match        https://hn.algolia.com/*
@@ -192,30 +192,60 @@
     console.log('[HN Algolia] Successfully injected new date range options');
   }
 
+  // Wait for list items to appear in listbox
+  function waitForListItems(maxAttempts = 20) {
+    return new Promise((resolve) => {
+      let attempts = 0;
+
+      const checkListItems = () => {
+        const listbox = document.querySelector('[role="listbox"]');
+        const listItems = listbox ? listbox.querySelectorAll('li[role="option"]') : [];
+
+        attempts++;
+        console.log(`[HN Algolia] Attempt ${attempts}: Found ${listItems.length} list items`);
+
+        if (listItems.length > 0) {
+          console.log('[HN Algolia] List items found, proceeding');
+          resolve(true);
+        } else if (attempts < maxAttempts) {
+          // Keep checking every 50ms
+          setTimeout(checkListItems, 50);
+        } else {
+          console.warn('[HN Algolia] Timeout waiting for list items');
+          resolve(false);
+        }
+      };
+
+      checkListItems();
+    });
+  }
+
   // Observer to detect when dropdown opens/closes
   function observeDropdownChanges() {
     const observerCallback = (mutations) => {
       for (const mutation of mutations) {
-        // Check if a listbox was added or modified
-        if (mutation.type === 'childList') {
-          for (const node of mutation.addedNodes) {
-            if (node.nodeType === 1 && node.getAttribute('role') === 'listbox') {
-              console.log('[HN Algolia] Listbox added, injecting options');
-              setTimeout(injectDateRangeOptions, 100);
-            }
-          }
-
-          // Check for modifications to existing listbox
-          if (mutation.target.getAttribute && mutation.target.getAttribute('role') === 'listbox') {
-            setTimeout(injectDateRangeOptions, 50);
-          }
-        }
-
-        // Also check for class changes that might indicate dropdown opening
+        // Check for class changes that might indicate dropdown opening
         if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
           if (mutation.target.classList && mutation.target.classList.contains('Dropdown_list--open')) {
             console.log('[HN Algolia] Dropdown opened (class change detected)');
-            setTimeout(injectDateRangeOptions, 100);
+
+            // Wait for list items to appear, then inject
+            waitForListItems().then((success) => {
+              if (success) {
+                injectDateRangeOptions();
+              }
+            });
+          }
+        }
+
+        // Also watch for new list items being added to existing listbox
+        if (mutation.type === 'childList') {
+          if (mutation.target.getAttribute && mutation.target.getAttribute('role') === 'listbox') {
+            // List items were just added to the listbox
+            if (mutation.target.querySelectorAll('li[role="option"]').length > 0) {
+              console.log('[HN Algolia] List items added to listbox');
+              injectDateRangeOptions();
+            }
           }
         }
       }
