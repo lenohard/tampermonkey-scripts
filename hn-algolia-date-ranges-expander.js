@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HN Algolia - Expand Date Range Options
 // @namespace    http://tampermonkey.net/
-// @version      2.3
+// @version      2.4
 // @description  Add quick date range buttons (Last 2/3/4 days) to HN Algolia search
 // @author       You
 // @match        https://hn.algolia.com/*
@@ -35,6 +35,114 @@
     return Math.floor(date.getTime() / 1000);
   }
 
+  // Inject quick-range styles once so buttons match Algolia UI
+  function injectStyles() {
+    if (document.getElementById('hn-algolia-quick-range-styles')) {
+      return;
+    }
+
+    const style = document.createElement('style');
+    style.id = 'hn-algolia-quick-range-styles';
+    style.textContent = `
+      .hn-algolia-quick-range-wrapper {
+        display: inline-flex;
+        align-items: center;
+      }
+
+      .hn-algolia-quick-range-group {
+        display: inline-flex;
+        border: 1px solid #d8d8d8;
+        border-radius: 4px;
+        overflow: hidden;
+        background: #f6f6ef;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      }
+
+      .hn-algolia-quick-range-btn {
+        border: 0;
+        background: transparent;
+        padding: 4px 12px;
+        font-size: 12px;
+        color: #7c6953;
+        cursor: pointer;
+        line-height: 1.4;
+        transition: background 0.15s ease, color 0.15s ease;
+      }
+
+      .hn-algolia-quick-range-btn + .hn-algolia-quick-range-btn {
+        border-left: 1px solid #e0d9c8;
+      }
+
+      .hn-algolia-quick-range-btn:hover,
+      .hn-algolia-quick-range-btn:focus-visible {
+        background: #fff6dd;
+        color: #5b432a;
+        outline: none;
+      }
+
+      .hn-algolia-quick-range-btn.is-active {
+        background: #ff6600;
+        color: #fff;
+        font-weight: 600;
+      }
+    `;
+
+    document.head.appendChild(style);
+  }
+
+  function getCurrentUrlRange() {
+    const params = new URLSearchParams(window.location.search);
+    const dateRange = params.get('dateRange');
+    const dateStart = parseInt(params.get('dateStart') || '', 10);
+    const dateEnd = parseInt(params.get('dateEnd') || '', 10);
+
+    if (Number.isNaN(dateStart) || Number.isNaN(dateEnd)) {
+      return null;
+    }
+
+    return { dateRange, dateStart, dateEnd };
+  }
+
+  function isRangeActive(days, currentRange) {
+    if (!currentRange || currentRange.dateRange !== 'custom') {
+      return false;
+    }
+
+    const toleranceSeconds = 60; // absorb rounding differences
+    const expectedStart = getTimestampNDaysAgo(days);
+    const expectedEnd = getTodayTimestamp();
+
+    return (
+      Math.abs(currentRange.dateStart - expectedStart) <= toleranceSeconds &&
+      Math.abs(currentRange.dateEnd - expectedEnd) <= toleranceSeconds
+    );
+  }
+
+  function syncActiveButton(buttonGroup) {
+    if (!buttonGroup) {
+      return;
+    }
+
+    const currentRange = getCurrentUrlRange();
+
+    buttonGroup.querySelectorAll('.hn-algolia-quick-range-btn').forEach((btn) => {
+      const days = parseInt(btn.dataset.days || '', 10);
+      if (Number.isNaN(days)) {
+        return;
+      }
+
+      const active = isRangeActive(days, currentRange);
+
+      if (active) {
+        btn.classList.add('is-active');
+      } else {
+        btn.classList.remove('is-active');
+      }
+
+      btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+  }
+
   // Update URL with new date range parameters
   function updateDateRange(days) {
     console.log(`[HN Algolia] Applying: Last ${days} days`);
@@ -61,85 +169,60 @@
   function createCustomButtons() {
     console.log('[HN Algolia] Creating custom date range buttons');
 
-    // Check if buttons already exist
-    if (document.getElementById('hn-algolia-custom-dates')) {
-      console.log('[HN Algolia] Buttons already exist, skipping');
+    injectStyles();
+
+    // Find the filters row so we can append inline
+    const filtersRow = document.querySelector('.SearchFilters_filters');
+
+    if (!filtersRow) {
+      console.warn('[HN Algolia] Could not find .SearchFilters_filters - retrying later');
       return;
     }
 
-    // Find the dropdown button by looking for the SearchFilters_menuButton class
-    let dropdownButton = document.querySelector('button.SearchFilters_menuButton');
-
-    if (!dropdownButton) {
-      console.warn('[HN Algolia] Could not find SearchFilters_menuButton - retrying later');
+    // If buttons already exist, just sync state
+    const existingGroup = document.getElementById('hn-algolia-custom-dates');
+    if (existingGroup) {
+      console.log('[HN Algolia] Buttons already exist, syncing state only');
+      syncActiveButton(existingGroup);
       return;
     }
 
-    console.log('[HN Algolia] Found dropdown button with class: SearchFilters_menuButton');
-
-    // Get the parent container
-    const container = dropdownButton.parentElement;
+    // Wrapper matches existing filter containers for consistent spacing
+    const wrapper = document.createElement('span');
+    wrapper.id = 'hn-algolia-custom-dates-wrapper';
+    wrapper.classList.add('SearchFilters_filterContainer', 'hn-algolia-quick-range-wrapper');
 
     // Create a wrapper div for our custom buttons
     const buttonGroup = document.createElement('div');
     buttonGroup.id = 'hn-algolia-custom-dates';
-    buttonGroup.style.cssText = `
-      display: flex;
-      gap: 8px;
-      margin-left: 12px;
-      flex-wrap: wrap;
-      align-items: center;
-    `;
+    buttonGroup.classList.add('hn-algolia-quick-range-group');
+    buttonGroup.setAttribute('role', 'group');
+    buttonGroup.setAttribute('aria-label', 'Quick date ranges');
 
     // Create buttons for each date range
     NEW_DATE_RANGES.forEach((range) => {
       const btn = document.createElement('button');
+      btn.type = 'button';
       btn.textContent = range.label;
-      btn.style.cssText = `
-        padding: 8px 16px;
-        border: 1px solid #d0d0d0;
-        border-radius: 5px;
-        background: #ffffff;
-        cursor: pointer;
-        font-size: 14px;
-        font-weight: 500;
-        transition: all 0.15s ease;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
-        white-space: nowrap;
-      `;
-
-      btn.addEventListener('mouseover', () => {
-        btn.style.backgroundColor = '#f5f5f5';
-        btn.style.borderColor = '#888';
-        btn.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.1)';
-      });
-
-      btn.addEventListener('mouseout', () => {
-        btn.style.backgroundColor = '#ffffff';
-        btn.style.borderColor = '#d0d0d0';
-        btn.style.boxShadow = '0 1px 2px rgba(0, 0, 0, 0.05)';
-      });
-
-      btn.addEventListener('active', () => {
-        btn.style.backgroundColor = '#e8e8e8';
-        btn.style.transform = 'scale(0.98)';
-      });
+      btn.dataset.days = String(range.days);
+      btn.classList.add('hn-algolia-quick-range-btn');
+      btn.setAttribute('aria-pressed', 'false');
 
       btn.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
-        btn.style.opacity = '0.7';
         setTimeout(() => {
           updateDateRange(range.days);
-        }, 100);
+        }, 80);
       });
 
       buttonGroup.appendChild(btn);
     });
 
-    // Insert after the dropdown button's parent
-    container.parentNode.insertBefore(buttonGroup, container.nextSibling);
+    wrapper.appendChild(buttonGroup);
+    filtersRow.appendChild(wrapper);
+
+    syncActiveButton(buttonGroup);
 
     console.log('[HN Algolia] Custom date range buttons created successfully');
   }
