@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HN Algolia - Expand Date Range Options
 // @namespace    http://tampermonkey.net/
-// @version      2.4
+// @version      2.5
 // @description  Add quick date range buttons (Last 2/3/4 days) to HN Algolia search
 // @author       You
 // @match        https://hn.algolia.com/*
@@ -35,7 +35,9 @@
     return Math.floor(date.getTime() / 1000);
   }
 
-  // Inject quick-range styles once so buttons match Algolia UI
+  const QUICK_ITEM_CLASS = 'hn-algolia-quick-range-item';
+
+  // Inject quick-range styles once so dropdown items feel native
   function injectStyles() {
     if (document.getElementById('hn-algolia-quick-range-styles')) {
       return;
@@ -44,46 +46,17 @@
     const style = document.createElement('style');
     style.id = 'hn-algolia-quick-range-styles';
     style.textContent = `
-      .hn-algolia-quick-range-wrapper {
-        display: inline-flex;
-        align-items: center;
+      .${QUICK_ITEM_CLASS} {
+        background: #fffaf0;
       }
 
-      .hn-algolia-quick-range-group {
-        display: inline-flex;
-        border: 1px solid #d8d8d8;
-        border-radius: 4px;
-        overflow: hidden;
-        background: #f6f6ef;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
-      }
-
-      .hn-algolia-quick-range-btn {
-        border: 0;
-        background: transparent;
-        padding: 4px 12px;
-        font-size: 12px;
+      .${QUICK_ITEM_CLASS} button {
+        font-weight: 500;
         color: #7c6953;
-        cursor: pointer;
-        line-height: 1.4;
-        transition: background 0.15s ease, color 0.15s ease;
       }
 
-      .hn-algolia-quick-range-btn + .hn-algolia-quick-range-btn {
-        border-left: 1px solid #e0d9c8;
-      }
-
-      .hn-algolia-quick-range-btn:hover,
-      .hn-algolia-quick-range-btn:focus-visible {
-        background: #fff6dd;
-        color: #5b432a;
-        outline: none;
-      }
-
-      .hn-algolia-quick-range-btn.is-active {
-        background: #ff6600;
-        color: #fff;
-        font-weight: 600;
+      .${QUICK_ITEM_CLASS} button.is-active {
+        color: #ff6600;
       }
     `;
 
@@ -118,14 +91,14 @@
     );
   }
 
-  function syncActiveButton(buttonGroup) {
-    if (!buttonGroup) {
+  function syncActiveButton(rootNode) {
+    if (!rootNode) {
       return;
     }
 
     const currentRange = getCurrentUrlRange();
 
-    buttonGroup.querySelectorAll('.hn-algolia-quick-range-btn').forEach((btn) => {
+    rootNode.querySelectorAll(`[data-hn-range-days]`).forEach((btn) => {
       const days = parseInt(btn.dataset.days || '', 10);
       if (Number.isNaN(days)) {
         return;
@@ -141,6 +114,54 @@
 
       btn.setAttribute('aria-pressed', active ? 'true' : 'false');
     });
+  }
+
+  function findDateDropdownList() {
+    const filterContainers = document.querySelectorAll('.SearchFilters_filterContainer');
+
+    for (const container of filterContainers) {
+      const label = container.querySelector('.SearchFilters_text');
+      if (label && label.textContent.trim().toLowerCase() === 'for') {
+        return container.querySelector('.Dropdown_list');
+      }
+    }
+
+    return null;
+  }
+
+  function ensureQuickItems(listNode) {
+    if (!listNode || listNode.querySelector(`li.${QUICK_ITEM_CLASS}`)) {
+      if (listNode) {
+        syncActiveButton(listNode);
+      }
+      return;
+    }
+
+    const fragment = document.createDocumentFragment();
+
+    NEW_DATE_RANGES.forEach((range) => {
+      const li = document.createElement('li');
+      li.classList.add(QUICK_ITEM_CLASS);
+
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = range.label;
+      btn.dataset.days = String(range.days);
+      btn.dataset.hnRangeDays = String(range.days);
+      btn.setAttribute('aria-pressed', 'false');
+
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setTimeout(() => updateDateRange(range.days), 50);
+      });
+
+      li.appendChild(btn);
+      fragment.appendChild(li);
+    });
+
+    listNode.insertBefore(fragment, listNode.firstChild);
+    syncActiveButton(listNode);
   }
 
   // Update URL with new date range parameters
@@ -165,66 +186,18 @@
     window.location.href = url.toString();
   }
 
-  // Create custom date range buttons
+  // Create custom date range buttons inside dropdown
   function createCustomButtons() {
-    console.log('[HN Algolia] Creating custom date range buttons');
+    const listNode = findDateDropdownList();
+
+    if (!listNode) {
+      console.warn('[HN Algolia] Could not find dropdown list for date filter - retrying later');
+      return;
+    }
 
     injectStyles();
-
-    // Find the filters row so we can append inline
-    const filtersRow = document.querySelector('.SearchFilters_filters');
-
-    if (!filtersRow) {
-      console.warn('[HN Algolia] Could not find .SearchFilters_filters - retrying later');
-      return;
-    }
-
-    // If buttons already exist, just sync state
-    const existingGroup = document.getElementById('hn-algolia-custom-dates');
-    if (existingGroup) {
-      console.log('[HN Algolia] Buttons already exist, syncing state only');
-      syncActiveButton(existingGroup);
-      return;
-    }
-
-    // Wrapper matches existing filter containers for consistent spacing
-    const wrapper = document.createElement('span');
-    wrapper.id = 'hn-algolia-custom-dates-wrapper';
-    wrapper.classList.add('SearchFilters_filterContainer', 'hn-algolia-quick-range-wrapper');
-
-    // Create a wrapper div for our custom buttons
-    const buttonGroup = document.createElement('div');
-    buttonGroup.id = 'hn-algolia-custom-dates';
-    buttonGroup.classList.add('hn-algolia-quick-range-group');
-    buttonGroup.setAttribute('role', 'group');
-    buttonGroup.setAttribute('aria-label', 'Quick date ranges');
-
-    // Create buttons for each date range
-    NEW_DATE_RANGES.forEach((range) => {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.textContent = range.label;
-      btn.dataset.days = String(range.days);
-      btn.classList.add('hn-algolia-quick-range-btn');
-      btn.setAttribute('aria-pressed', 'false');
-
-      btn.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        setTimeout(() => {
-          updateDateRange(range.days);
-        }, 80);
-      });
-
-      buttonGroup.appendChild(btn);
-    });
-
-    wrapper.appendChild(buttonGroup);
-    filtersRow.appendChild(wrapper);
-
-    syncActiveButton(buttonGroup);
-
-    console.log('[HN Algolia] Custom date range buttons created successfully');
+    ensureQuickItems(listNode);
+    console.log('[HN Algolia] Quick date range options ready inside dropdown');
   }
 
   // Wait for page to be ready and create buttons
