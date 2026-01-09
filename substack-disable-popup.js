@@ -11,6 +11,8 @@
 // @run-at       document_start
 // ==/UserScript==
 
+// don't work, but leave it here for reference
+
 (function() {
     'use strict';
 
@@ -27,6 +29,6 @@
     `;
 
     GM_addStyle(css);
-    
+
     console.log('Substack Text Selection Popup disabled via CSS (Aggressive Mode).');
 })();
