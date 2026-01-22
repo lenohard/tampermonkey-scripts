@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         小鹅通音频下载助手
 // @namespace    http://tampermonkey.net/
-// @version      1.0.3
+// @version      1.0.4
 // @description  小鹅通课程音频下载与链接复制（单页）
 // @author       Your name
 // @match        https://*.xiaoecloud.com/p/course/audio*
 // @grant        GM_download
 // @grant        GM_setClipboard
+// @grant        unsafeWindow
 // @connect      *
 // @updateURL    https://raw.githubusercontent.com/lenohard/tampermonkey-scripts/main/xiaoecloud-audio-downloader.js
 // @downloadURL  https://raw.githubusercontent.com/lenohard/tampermonkey-scripts/main/xiaoecloud-audio-downloader.js
@@ -18,6 +19,8 @@
     const TARGET_DIR = '小鹅通/八分半/';
     const AUDIO_EXT_RE = /\.mp3(\?|#|$)/i;
     let latestAudioUrl = '';
+    // With GM_* grants, Tampermonkey runs in an isolated world; use unsafeWindow for page hooks.
+    const pageWindow = (typeof unsafeWindow !== 'undefined' && unsafeWindow) ? unsafeWindow : window;
 
     function sanitizeFilename(name) {
         const cleaned = name
@@ -122,32 +125,48 @@
     }
 
     function hookNetwork() {
-        const originalFetch = window.fetch;
-        window.fetch = async (...args) => {
-            const requestUrl = typeof args[0] === 'string' ? args[0] : args[0]?.url;
-            if (requestUrl) {
-                setAudioUrl(requestUrl);
-            }
-            return originalFetch.apply(window, args);
-        };
-
-        const originalOpen = XMLHttpRequest.prototype.open;
-        XMLHttpRequest.prototype.open = function(method, url, ...rest) {
-            if (url) {
-                setAudioUrl(url);
-            }
-            return originalOpen.call(this, method, url, ...rest);
-        };
-
-        const originalSend = XMLHttpRequest.prototype.send;
-        XMLHttpRequest.prototype.send = function(...args) {
-            this.addEventListener('load', () => {
-                if (this.responseURL) {
-                    setAudioUrl(this.responseURL);
+        const originalFetch = pageWindow.fetch;
+        if (typeof originalFetch === 'function') {
+            pageWindow.fetch = async (...args) => {
+                const requestUrl = typeof args[0] === 'string' ? args[0] : args[0]?.url;
+                if (requestUrl) {
+                    setAudioUrl(requestUrl);
                 }
-            });
-            return originalSend.apply(this, args);
-        };
+                return originalFetch.apply(pageWindow, args);
+            };
+        }
+
+        const originalOpen = pageWindow.XMLHttpRequest?.prototype?.open;
+        if (typeof originalOpen === 'function') {
+            pageWindow.XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+                if (url) {
+                    setAudioUrl(url);
+                }
+                return originalOpen.call(this, method, url, ...rest);
+            };
+        }
+
+        const originalSend = pageWindow.XMLHttpRequest?.prototype?.send;
+        if (typeof originalSend === 'function') {
+            pageWindow.XMLHttpRequest.prototype.send = function(...args) {
+                this.addEventListener('load', () => {
+                    if (this.responseURL) {
+                        setAudioUrl(this.responseURL);
+                    }
+                });
+                return originalSend.apply(this, args);
+            };
+        }
+    }
+
+    function hookMediaPlayback() {
+        // Some pages create <audio> early and only assign src later; observing playback is reliable.
+        document.addEventListener('play', (ev) => {
+            const el = ev.target;
+            if (el && typeof el === 'object' && ('currentSrc' in el || 'src' in el)) {
+                setAudioUrl(el.currentSrc || el.src);
+            }
+        }, true);
     }
 
     function createPanel() {
@@ -263,6 +282,16 @@
     function observeDom() {
         const observer = new MutationObserver((mutations) => {
             mutations.forEach((mutation) => {
+                if (mutation.type === 'attributes') {
+                    const node = mutation.target;
+                    if (node instanceof Element) {
+                        const src = node.getAttribute('src') || node.src;
+                        if (src) {
+                            setAudioUrl(src);
+                        }
+                    }
+                    return;
+                }
                 mutation.addedNodes.forEach((node) => {
                     if (!(node instanceof Element)) {
                         return;
@@ -271,15 +300,23 @@
                 });
             });
         });
-        observer.observe(document.documentElement, { childList: true, subtree: true });
+        observer.observe(document.documentElement, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['src']
+        });
     }
 
     function init() {
         createPanel();
         hookNetwork();
+        hookMediaPlayback();
         scanForAudioElements();
         scanPerformanceEntries();
         observeDom();
+        // Keep it robust: src may be updated without node insertion.
+        setInterval(scanForAudioElements, 1500);
         setInterval(scanPerformanceEntries, 3000);
     }
 
