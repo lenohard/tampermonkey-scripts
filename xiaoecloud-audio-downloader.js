@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         小鹅通音频下载助手
 // @namespace    http://tampermonkey.net/
-// @version      1.0.4
+// @version      1.0.5
 // @description  小鹅通课程音频下载与链接复制（单页）
 // @author       Your name
 // @match        https://*.xiaoecloud.com/p/course/audio*
 // @grant        GM_download
 // @grant        GM_setClipboard
 // @grant        unsafeWindow
+// @run-at       document-start
 // @connect      *
 // @updateURL    https://raw.githubusercontent.com/lenohard/tampermonkey-scripts/main/xiaoecloud-audio-downloader.js
 // @downloadURL  https://raw.githubusercontent.com/lenohard/tampermonkey-scripts/main/xiaoecloud-audio-downloader.js
@@ -17,10 +18,15 @@
     'use strict';
 
     const TARGET_DIR = '小鹅通/八分半/';
-    const AUDIO_EXT_RE = /\.mp3(\?|#|$)/i;
+    const AUDIO_EXT_RE = /\.mp3/i;  // More permissive - just check for .mp3 anywhere
     let latestAudioUrl = '';
     // With GM_* grants, Tampermonkey runs in an isolated world; use unsafeWindow for page hooks.
     const pageWindow = (typeof unsafeWindow !== 'undefined' && unsafeWindow) ? unsafeWindow : window;
+
+    // Debug helper
+    function debugLog(...args) {
+        console.log('[xe-audio]', ...args);
+    }
 
     function sanitizeFilename(name) {
         const cleaned = name
@@ -88,9 +94,11 @@
     }
 
     function setAudioUrl(url) {
-        if (!url || !AUDIO_EXT_RE.test(url)) {
+        if (!url) return;
+        if (!AUDIO_EXT_RE.test(url)) {
             return;
         }
+        debugLog('Found audio URL:', url);
         if (latestAudioUrl === url) {
             return;
         }
@@ -100,8 +108,10 @@
 
     function scanForAudioElements(root = document) {
         const audios = root.querySelectorAll('audio, source');
+        debugLog('Scanning for audio elements, found:', audios.length);
         audios.forEach((node) => {
             const src = node.getAttribute('src') || node.src;
+            debugLog('Audio element src:', src);
             if (src) {
                 setAudioUrl(src);
             }
