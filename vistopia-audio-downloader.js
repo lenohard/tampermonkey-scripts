@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vistopia音频下载助手
 // @namespace    http://tampermonkey.net/
-// @version      1.1
+// @version      1.3
 // @description  从vistopia.com.cn专辑页面提取音频并提供批量下载功能
 // @author       Your name
 // @match        https://www.vistopia.com.cn/detail/*
@@ -12,6 +12,8 @@
 // @connect      www.vistopia.com.cn
 // @connect      *.vistopia.com.cn
 // @run-at       document-idle
+// @updateURL    https://raw.githubusercontent.com/lenohard/tampermonkey-scripts/main/vistopia-audio-downloader.js
+// @downloadURL  https://raw.githubusercontent.com/lenohard/tampermonkey-scripts/main/vistopia-audio-downloader.js
 // ==/UserScript==
 
 (function() {
@@ -160,16 +162,71 @@
         return str.replace(/[\/\\:*?"<>|]/g, '-').trim();
     }
 
-    // Build filename with zero-padded index if title doesn't start with digits
+    // Parse chapter groupings from the DOM
+    // Returns: [{ chapterName: string, articleTitles: string[] }, ...]
+    function parseChaptersFromDOM() {
+        const chapters = [];
+        // Each chapter is a <div> containing a <section class="catalog-theme"> followed by a <ul>
+        const catalogContainers = document.querySelectorAll('section.catalog-theme');
+        catalogContainers.forEach((section) => {
+            const nameEl = section.querySelector('.mmm');
+            const chapterName = nameEl ? nameEl.textContent.trim() : '';
+            // The <ul> with episodes is the next sibling of the section's parent or the section itself
+            const parent = section.parentElement;
+            const ul = parent ? parent.querySelector('ul') : null;
+            const titles = [];
+            if (ul) {
+                ul.querySelectorAll('.infoplayer_title').forEach(el => {
+                    titles.push(el.textContent.trim());
+                });
+            }
+            if (chapterName) {
+                chapters.push({ chapterName, articleTitles: titles });
+            }
+        });
+        return chapters;
+    }
+
+    // Build a mapping from article title -> { chapterFolder, filename }
+    // chapterFolder: "{chapterIndex} {chapterName}"
+    // filename: prepend index only if not all episodes in the chapter already start with arabic numbers
+    function buildChapterMapping(chapters) {
+        const mapping = {}; // title -> { chapterFolder, filename }
+        const chapterPadLen = String(chapters.length).length;
+
+        chapters.forEach((chapter, chapterIdx) => {
+            const chapterPrefix = String(chapterIdx + 1).padStart(chapterPadLen, '0');
+            const chapterFolder = sanitize(`${chapterPrefix} ${chapter.chapterName}`);
+            const titles = chapter.articleTitles;
+            const total = titles.length;
+            const padLen = String(total).length;
+
+            // Check if ALL episodes in this chapter already start with arabic numbers
+            const allStartWithNumber = titles.length > 0 && titles.every(t => /^\d/.test(t));
+
+            titles.forEach((title, epIdx) => {
+                let filename;
+                if (allStartWithNumber) {
+                    filename = `${sanitize(title)}.mp3`;
+                } else {
+                    const prefix = String(epIdx + 1).padStart(padLen, '0');
+                    filename = `${prefix} ${sanitize(title)}.mp3`;
+                }
+                mapping[title] = { chapterFolder, filename };
+            });
+        });
+
+        return mapping;
+    }
+
+    // Store chapter mapping globally
+    let chapterMapping = {};
+
+    // Build filename for articles without chapter info (fallback)
     function buildFilename(title, index, total) {
         const padLen = String(total).length;
         const prefix = String(index + 1).padStart(padLen, '0');
-        const clean = sanitize(title);
-        // If title already starts with digits (e.g. "01 Intro", "1. Foo"), keep as-is
-        if (/^\d/.test(clean)) {
-            return clean + '.mp3';
-        }
-        return `${prefix} ${clean}.mp3`;
+        return `${prefix} ${sanitize(title)}.mp3`;
     }
 
     // Download a single audio
@@ -182,8 +239,17 @@
             const downloadUrl = await fetchDownloadUrl(tokenData.play_token);
 
             const folder = sanitize(contentTitle);
-            const filename = buildFilename(item.title, index, total);
-            const fullPath = `vistopia/${folder}/${filename}`;
+            let fullPath;
+
+            // Use chapter mapping if available
+            const mapped = chapterMapping[item.title];
+            if (mapped) {
+                fullPath = `vistopia/${folder}/${mapped.chapterFolder}/${mapped.filename}`;
+            } else {
+                // Fallback: flat structure with global index
+                const filename = buildFilename(item.title, index, total);
+                fullPath = `vistopia/${folder}/${filename}`;
+            }
 
             statusEl.textContent = '下载中...';
 
@@ -291,6 +357,31 @@
             color: #666;
             margin-left: auto;
         }
+        .vdl-range-row {
+            padding: 6px 15px;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            gap: 6px;
+            align-items: center;
+            font-size: 12px;
+            color: #555;
+        }
+        .vdl-range-input {
+            width: 50px;
+            padding: 3px 6px;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+            font-size: 12px;
+            text-align: center;
+        }
+        .vdl-range-input:focus {
+            outline: none;
+            border-color: #007bff;
+        }
+        .vdl-btn-sm {
+            padding: 3px 10px;
+            font-size: 11px;
+        }
         .vdl-list {
             flex: 1;
             overflow-y: auto;
@@ -358,6 +449,54 @@
             justify-content: center;
         }
         .vdl-toggle-btn:hover { background: #0056b3; }
+        .vdl-chapter {
+            margin-bottom: 2px;
+        }
+        .vdl-chapter-header {
+            display: flex;
+            align-items: center;
+            padding: 7px 8px;
+            background: #e9ecef;
+            border-radius: 4px;
+            cursor: pointer;
+            gap: 8px;
+            user-select: none;
+        }
+        .vdl-chapter-header:hover { background: #dee2e6; }
+        .vdl-chapter-arrow {
+            font-size: 10px;
+            transition: transform 0.15s;
+            flex-shrink: 0;
+            width: 14px;
+            text-align: center;
+        }
+        .vdl-chapter-arrow.collapsed { transform: rotate(-90deg); }
+        .vdl-chapter-header input[type="checkbox"] {
+            flex-shrink: 0;
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
+        }
+        .vdl-chapter-name {
+            font-size: 13px;
+            font-weight: 600;
+            color: #333;
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .vdl-chapter-count {
+            font-size: 11px;
+            color: #888;
+            flex-shrink: 0;
+        }
+        .vdl-chapter-items {
+            padding-left: 10px;
+        }
+        .vdl-chapter-items.collapsed {
+            display: none;
+        }
     `;
     document.head.appendChild(style);
 
@@ -402,44 +541,215 @@
         toolbar.append(selectAllBtn, deselectAllBtn, batchBtn, selectInfo);
         panel.appendChild(toolbar);
 
+        // Range selection row
+        const rangeRow = document.createElement('div');
+        rangeRow.className = 'vdl-range-row';
+
+        const rangeLabel = document.createElement('span');
+        rangeLabel.textContent = '范围选择:';
+
+        const rangeFrom = document.createElement('input');
+        rangeFrom.className = 'vdl-range-input';
+        rangeFrom.type = 'number';
+        rangeFrom.min = '1';
+        rangeFrom.max = String(articles.length);
+        rangeFrom.placeholder = '起';
+
+        const rangeSep = document.createElement('span');
+        rangeSep.textContent = '–';
+
+        const rangeTo = document.createElement('input');
+        rangeTo.className = 'vdl-range-input';
+        rangeTo.type = 'number';
+        rangeTo.min = '1';
+        rangeTo.max = String(articles.length);
+        rangeTo.placeholder = '止';
+
+        const rangeSelectBtn = document.createElement('button');
+        rangeSelectBtn.className = 'vdl-btn vdl-btn-primary vdl-btn-sm';
+        rangeSelectBtn.textContent = '选择';
+
+        const rangeHint = document.createElement('span');
+        rangeHint.style.color = '#999';
+        rangeHint.textContent = `(1-${articles.length})`;
+
+        rangeRow.append(rangeLabel, rangeFrom, rangeSep, rangeTo, rangeSelectBtn, rangeHint);
+        panel.appendChild(rangeRow);
+
+        // Range select handler
+        rangeSelectBtn.addEventListener('click', () => {
+            const from = parseInt(rangeFrom.value, 10);
+            const to = parseInt(rangeTo.value, 10);
+            if (isNaN(from) || isNaN(to) || from < 1 || to < 1 || from > articles.length || to > articles.length) {
+                alert(`请输入 1-${articles.length} 之间的有效范围`);
+                return;
+            }
+            const lo = Math.min(from, to) - 1;
+            const hi = Math.max(from, to) - 1;
+            items.forEach(i => { i.cb.checked = false; });
+            for (let j = lo; j <= hi; j++) {
+                items[j].cb.checked = true;
+            }
+            syncAllChapterCbs();
+            updateSelectInfo();
+        });
+
         // List
         const list = document.createElement('div');
         list.className = 'vdl-list';
 
         const items = [];
         const totalCount = articles.length;
-        articles.forEach((article, idx) => {
-            const item = document.createElement('div');
-            item.className = 'vdl-item';
 
-            const cb = document.createElement('input');
-            cb.type = 'checkbox';
-            cb.dataset.index = idx;
+        // Group articles by chapter using parsed DOM chapters
+        const chapters = parseChaptersFromDOM();
+        const hasChapters = chapters.length > 0;
 
-            const info = document.createElement('div');
-            info.className = 'vdl-item-info';
-            info.innerHTML = `
-                <div class="vdl-item-title">${article.title}</div>
-                <div class="vdl-item-meta">${article.duration_str || ''}</div>
-            `;
+        if (hasChapters) {
+            // Build a title -> article lookup (API data has article_id etc.)
+            const titleToArticle = {};
+            articles.forEach((a, i) => { titleToArticle[a.title] = { article: a, globalIdx: i }; });
 
-            const status = document.createElement('span');
-            status.className = 'vdl-item-status';
-            status.textContent = '';
+            const chapterPadLen = String(chapters.length).length;
+            chapters.forEach((chapter, chapterIdx) => {
+                const chapterDiv = document.createElement('div');
+                chapterDiv.className = 'vdl-chapter';
 
-            const dlBtn = document.createElement('button');
-            dlBtn.className = 'vdl-btn vdl-btn-success vdl-item-dl';
-            dlBtn.textContent = '下载';
-            dlBtn.addEventListener('click', async () => {
-                dlBtn.disabled = true;
-                await downloadSingle(article, status, idx, articles.length);
-                dlBtn.disabled = false;
+                const chapterPrefix = String(chapterIdx + 1).padStart(chapterPadLen, '0');
+                const chapterLabel = `${chapterPrefix} ${chapter.chapterName}`;
+
+                // Chapter header
+                const chapterHeader = document.createElement('div');
+                chapterHeader.className = 'vdl-chapter-header';
+
+                const arrow = document.createElement('span');
+                arrow.className = 'vdl-chapter-arrow';
+                arrow.textContent = '▼';
+
+                const chapterCb = document.createElement('input');
+                chapterCb.type = 'checkbox';
+
+                const chapterName = document.createElement('span');
+                chapterName.className = 'vdl-chapter-name';
+                chapterName.textContent = chapterLabel;
+
+                const chapterCount = document.createElement('span');
+                chapterCount.className = 'vdl-chapter-count';
+                chapterCount.textContent = `${chapter.articleTitles.length}集`;
+
+                chapterHeader.append(arrow, chapterCb, chapterName, chapterCount);
+                chapterDiv.appendChild(chapterHeader);
+
+                // Episode list under this chapter
+                const chapterItems = document.createElement('div');
+                chapterItems.className = 'vdl-chapter-items';
+
+                const chapterEpItems = []; // track items in this chapter
+
+                chapter.articleTitles.forEach((title, epIdx) => {
+                    const match = titleToArticle[title];
+                    if (!match) return;
+                    const { article, globalIdx } = match;
+
+                    const item = document.createElement('div');
+                    item.className = 'vdl-item';
+
+                    const cb = document.createElement('input');
+                    cb.type = 'checkbox';
+                    cb.dataset.index = globalIdx;
+
+                    const info = document.createElement('div');
+                    info.className = 'vdl-item-info';
+                    // Show the filename that will be used for download
+                    const mapped = chapterMapping[title];
+                    const displayTitle = mapped ? mapped.filename.replace(/\.mp3$/, '') : article.title;
+                    info.innerHTML = `
+                        <div class="vdl-item-title">${displayTitle}</div>
+                        <div class="vdl-item-meta">${article.duration_str || ''}</div>
+                    `;
+
+                    const status = document.createElement('span');
+                    status.className = 'vdl-item-status';
+                    status.textContent = '';
+
+                    const dlBtn = document.createElement('button');
+                    dlBtn.className = 'vdl-btn vdl-btn-success vdl-item-dl';
+                    dlBtn.textContent = '下载';
+                    dlBtn.addEventListener('click', async () => {
+                        dlBtn.disabled = true;
+                        await downloadSingle(article, status, globalIdx, totalCount);
+                        dlBtn.disabled = false;
+                    });
+
+                    item.append(cb, info, status, dlBtn);
+                    chapterItems.appendChild(item);
+                    const itemObj = { cb, status, article, idx: globalIdx };
+                    items.push(itemObj);
+                    chapterEpItems.push(itemObj);
+                });
+
+                chapterDiv.appendChild(chapterItems);
+                list.appendChild(chapterDiv);
+
+                // Chapter checkbox toggles all episodes in this chapter
+                chapterCb.addEventListener('change', () => {
+                    chapterEpItems.forEach(i => { i.cb.checked = chapterCb.checked; });
+                    updateSelectInfo();
+                });
+                // Stop click on checkbox from toggling collapse
+                chapterCb.addEventListener('click', (e) => { e.stopPropagation(); });
+
+                // Update chapter checkbox state when individual episodes change
+                const syncChapterCb = () => {
+                    const allChecked = chapterEpItems.length > 0 && chapterEpItems.every(i => i.cb.checked);
+                    const someChecked = chapterEpItems.some(i => i.cb.checked);
+                    chapterCb.checked = allChecked;
+                    chapterCb.indeterminate = !allChecked && someChecked;
+                };
+                chapterEpItems.forEach(i => i.cb.addEventListener('change', syncChapterCb));
+
+                // Toggle collapse on header click
+                chapterHeader.addEventListener('click', (e) => {
+                    if (e.target === chapterCb) return;
+                    const collapsed = chapterItems.classList.toggle('collapsed');
+                    arrow.classList.toggle('collapsed', collapsed);
+                });
             });
+        } else {
+            // Flat list fallback (no chapters)
+            articles.forEach((article, idx) => {
+                const item = document.createElement('div');
+                item.className = 'vdl-item';
 
-            item.append(cb, info, status, dlBtn);
-            list.appendChild(item);
-            items.push({ cb, status, article, idx });
-        });
+                const cb = document.createElement('input');
+                cb.type = 'checkbox';
+                cb.dataset.index = idx;
+
+                const info = document.createElement('div');
+                info.className = 'vdl-item-info';
+                info.innerHTML = `
+                    <div class="vdl-item-title">${article.title}</div>
+                    <div class="vdl-item-meta">${article.duration_str || ''}</div>
+                `;
+
+                const status = document.createElement('span');
+                status.className = 'vdl-item-status';
+                status.textContent = '';
+
+                const dlBtn = document.createElement('button');
+                dlBtn.className = 'vdl-btn vdl-btn-success vdl-item-dl';
+                dlBtn.textContent = '下载';
+                dlBtn.addEventListener('click', async () => {
+                    dlBtn.disabled = true;
+                    await downloadSingle(article, status, idx, totalCount);
+                    dlBtn.disabled = false;
+                });
+
+                item.append(cb, info, status, dlBtn);
+                list.appendChild(item);
+                items.push({ cb, status, article, idx });
+            });
+        }
 
         panel.appendChild(list);
         document.body.appendChild(panel);
@@ -451,13 +761,26 @@
         }
         items.forEach(i => i.cb.addEventListener('change', updateSelectInfo));
 
-        // Select all / deselect
+        // Select all / deselect (also sync chapter checkboxes)
+        function syncAllChapterCbs() {
+            list.querySelectorAll('.vdl-chapter').forEach(chapterDiv => {
+                const chapterCb = chapterDiv.querySelector('.vdl-chapter-header input[type="checkbox"]');
+                const epCbs = chapterDiv.querySelectorAll('.vdl-chapter-items input[type="checkbox"]');
+                if (!chapterCb || epCbs.length === 0) return;
+                const allChecked = Array.from(epCbs).every(cb => cb.checked);
+                const someChecked = Array.from(epCbs).some(cb => cb.checked);
+                chapterCb.checked = allChecked;
+                chapterCb.indeterminate = !allChecked && someChecked;
+            });
+        }
         selectAllBtn.addEventListener('click', () => {
             items.forEach(i => { i.cb.checked = true; });
+            syncAllChapterCbs();
             updateSelectInfo();
         });
         deselectAllBtn.addEventListener('click', () => {
             items.forEach(i => { i.cb.checked = false; });
+            syncAllChapterCbs();
             updateSelectInfo();
         });
 
@@ -546,6 +869,15 @@
             const articles = await fetchArticleList();
             audioList = articles;
             console.log(`[Vistopia DL] 获取到 ${articles.length} 个音频`);
+
+            // Parse chapter groupings from DOM
+            const chapters = parseChaptersFromDOM();
+            if (chapters.length > 0) {
+                chapterMapping = buildChapterMapping(chapters);
+                console.log(`[Vistopia DL] 解析到 ${chapters.length} 个章节:`, chapters.map(c => c.chapterName));
+            } else {
+                console.log('[Vistopia DL] 未找到章节分组，使用扁平结构');
+            }
 
             if (articles.length > 0) {
                 createPanel(articles);
