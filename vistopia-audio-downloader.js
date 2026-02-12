@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vistopia音频下载助手
 // @namespace    http://tampermonkey.net/
-// @version      1.3
+// @version      1.4
 // @description  从vistopia.com.cn专辑页面提取音频并提供批量下载功能
 // @author       Your name
 // @match        https://www.vistopia.com.cn/detail/*
