@@ -357,8 +357,7 @@
                 // Save .desc — fetch real description from detail API
                 if (needDesc) {
                     const descContent = await fetchDetail(ch.resource_id, params.product_id);
-                    const descFile = `${TARGET_DIR}${sanitize(ch.title)}.desc`;
-                    await downloadText(descContent, descFile);
+                    await downloadText(descContent, `${sanitize(ch.title)}.desc`);
                 }
 
                 // Download audio
