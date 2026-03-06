@@ -1,11 +1,13 @@
 // ==UserScript==
 // @name         小鹅通音频下载助手
 // @namespace    http://tampermonkey.net/
-// @version      2.0.0
+// @version      2.1.0
 // @description  小鹅通课程音频下载：支持选集下载、批量下载、描述文件保存
 // @author       lenohard
 // @match        https://*.xiaoeknow.com/p/course/audio*
 // @match        https://*.xiaoecloud.com/p/course/audio*
+// @match        https://*.xiaoeknow.com/p/course/ecourse/*
+// @match        https://*.xiaoecloud.com/p/course/ecourse/*
 // @grant        GM_download
 // @grant        GM_setClipboard
 // @grant        GM_xmlhttpRequest
@@ -40,10 +42,16 @@
     /** Parse URL params from current page */
     function getPageParams() {
         const u = new URL(location.href);
-        // resource_id is the last path segment
-        const resource_id = u.pathname.split('/').filter(Boolean).pop() || '';
-        const product_id = u.searchParams.get('product_id') || u.searchParams.get('pro_id') || '';
+        const pathParts = u.pathname.split('/').filter(Boolean);
+        // Last path segment is always the resource/course id
+        const lastSeg = pathParts.pop() || '';
+        // On course overview page: /p/course/ecourse/<course_id>
+        // On chapter page:         /p/course/audio/<resource_id>?product_id=<course_id>
+        const isCourseOverview = pathParts.includes('ecourse');
+        const course_id_from_path = isCourseOverview ? lastSeg : '';
+        const product_id = u.searchParams.get('product_id') || u.searchParams.get('pro_id') || course_id_from_path || '';
         const course_id = u.searchParams.get('course_id') || product_id;
+        const resource_id = isCourseOverview ? '' : lastSeg;
         // app_id is the subdomain prefix: appXXX.h5.xiaoeknow.com
         const app_id = u.hostname.split('.')[0];
         return { resource_id, product_id, course_id, app_id };
@@ -132,30 +140,37 @@
     }
 
     function downloadText(content, filename) {
-        // GM_download supports data: URIs for text
-        const dataUrl = `data:text/plain;charset=utf-8,${encodeURIComponent(content)}`;
-        return new Promise((resolve, reject) => {
-            GM_download({
-                url: dataUrl,
-                name: filename,
-                saveAs: false,
-                onload: resolve,
-                onerror: () => {
-                    // fallback: blob URL
-                    try {
-                        const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-                        const burl = URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = burl;
-                        a.download = filename.split('/').pop();
-                        document.body.appendChild(a);
-                        a.click();
-                        document.body.removeChild(a);
-                        setTimeout(() => URL.revokeObjectURL(burl), 1000);
-                        resolve();
-                    } catch (e) { reject(e); }
-                },
-            });
+        // Use blob URL — more reliable than data: URI for Chinese text in GM_download
+        return new Promise((resolve) => {
+            try {
+                const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+                const burl = URL.createObjectURL(blob);
+                GM_download({
+                    url: burl,
+                    name: filename,
+                    saveAs: false,
+                    onload: () => { URL.revokeObjectURL(burl); resolve(); },
+                    onerror: () => {
+                        URL.revokeObjectURL(burl);
+                        // Last resort: anchor click (no subdir path support)
+                        try {
+                            const blob2 = new Blob([content], { type: 'text/plain;charset=utf-8' });
+                            const burl2 = URL.createObjectURL(blob2);
+                            const a = document.createElement('a');
+                            a.href = burl2;
+                            a.download = filename.split('/').pop();
+                            document.body.appendChild(a);
+                            a.click();
+                            document.body.removeChild(a);
+                            setTimeout(() => URL.revokeObjectURL(burl2), 1000);
+                        } catch (_) {}
+                        resolve(); // don't fail the whole batch over a .desc
+                    },
+                });
+            } catch (e) {
+                log('downloadText error:', e);
+                resolve();
+            }
         });
     }
 
@@ -315,15 +330,16 @@
                     const info = await fetchAudioInfo(ch.resource_id, params.product_id);
                     ch.audioUrl = info.audio_url || '';
                     if (!ch.audioUrl) throw new Error('API 未返回 audio_url');
-                    // Save description if available
-                    if (downloadDesc && info.title) {
-                        const descText = info.title;
-                        const descFile = `${TARGET_DIR}${sanitize(ch.title)}.desc`;
-                        try { await downloadText(descText, descFile); } catch (_) {}
-                    }
                 }
 
-                // 2. Download audio
+                // 2. Save description (.desc) — content is the chapter title
+                //    (API has no separate description field for this course type)
+                if (downloadDesc) {
+                    const descFile = `${TARGET_DIR}${sanitize(ch.title)}.desc`;
+                    await downloadText(ch.title, descFile);
+                }
+
+                // 3. Download audio
                 const extMatch = ch.audioUrl.match(/\.(mp3|m4a|aac|wav|ogg|flac)(\?|$)/i);
                 const ext = extMatch ? extMatch[1].toLowerCase() : 'mp3';
                 const audioFile = `${TARGET_DIR}${sanitize(ch.title)}.${ext}`;
