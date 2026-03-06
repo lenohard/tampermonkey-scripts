@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         小鹅通音频下载助手
 // @namespace    http://tampermonkey.net/
-// @version      2.2.0
+// @version      2.2.1
 // @description  小鹅通课程音频下载：支持选集下载、批量下载、描述文件保存
 // @author       lenohard
 // @match        https://*.xiaoeknow.com/p/course/audio*
@@ -140,31 +140,22 @@
     }
 
     function downloadText(content, filename) {
-        // Use blob URL — more reliable than data: URI for Chinese text in GM_download
+        // GM_download does NOT support blob: URLs (sandboxed).
+        // Use data: URI with base64-encoded UTF-8 bytes — handles CJK correctly.
         return new Promise((resolve) => {
             try {
-                const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-                const burl = URL.createObjectURL(blob);
+                // Encode to UTF-8 bytes then base64
+                const utf8Bytes = new TextEncoder().encode(content);
+                const base64 = btoa(String.fromCharCode(...utf8Bytes));
+                const dataUrl = `data:text/plain;charset=utf-8;base64,${base64}`;
                 GM_download({
-                    url: burl,
+                    url: dataUrl,
                     name: filename,
                     saveAs: false,
-                    onload: () => { URL.revokeObjectURL(burl); resolve(); },
-                    onerror: () => {
-                        URL.revokeObjectURL(burl);
-                        // Last resort: anchor click (no subdir path support)
-                        try {
-                            const blob2 = new Blob([content], { type: 'text/plain;charset=utf-8' });
-                            const burl2 = URL.createObjectURL(blob2);
-                            const a = document.createElement('a');
-                            a.href = burl2;
-                            a.download = filename.split('/').pop();
-                            document.body.appendChild(a);
-                            a.click();
-                            document.body.removeChild(a);
-                            setTimeout(() => URL.revokeObjectURL(burl2), 1000);
-                        } catch (_) {}
-                        resolve(); // don't fail the whole batch over a .desc
+                    onload: () => { log('desc saved:', filename); resolve(); },
+                    onerror: (err) => {
+                        log('GM_download desc failed:', err, filename);
+                        resolve(); // never block the batch
                     },
                 });
             } catch (e) {
