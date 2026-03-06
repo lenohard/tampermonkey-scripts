@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         小鹅通音频下载助手
 // @namespace    http://tampermonkey.net/
-// @version      1.1.1
+// @version      1.1.2
 // @description  小鹅通课程音频下载与链接复制（单页）
 // @author       Your name
 // @match        https://*.xiaoeknow.com/p/course/audio*
@@ -368,7 +368,7 @@
                 return;
             }
             const title = getTitle();
-            const filename = `${TARGET_DIR}${title}.txt`;
+            const filename = `${TARGET_DIR}${title}.desc`;
             downloadTextFile(filename, content);
             setStatus('描述已保存 ✓');
         });
