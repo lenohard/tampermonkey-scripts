@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         小鹅通音频下载助手
 // @namespace    http://tampermonkey.net/
-// @version      1.1.2
+// @version      1.1.3
 // @description  小鹅通课程音频下载与链接复制（单页）
 // @author       Your name
 // @match        https://*.xiaoeknow.com/p/course/audio*
@@ -119,12 +119,14 @@
         debugLog(message);
     }
 
+    const AUDIO_CDN_RE = /\.(xiaoeknow\.com|xet\.tech|myqcloud\.com|qcloud\.com)\//;
+
     function setAudioUrl(url) {
         if (!url || typeof url !== 'string') return;
         if (!url.startsWith('http')) return;
-        if (!(AUDIO_URL_RE.test(url) || url.includes('cdn.xiaoeknow.com') || url.includes('cdn.xet.tech'))) return;
+        if (!(AUDIO_URL_RE.test(url) || AUDIO_CDN_RE.test(url))) return;
         // Avoid non-audio CDN resources (images, JS, CSS)
-        if (/\.(jpg|jpeg|png|gif|webp|svg|css|js|ico|woff|ttf)(\?|$)/i.test(url)) return;
+        if (/\.(jpg|jpeg|png|gif|webp|svg|css|js|ico|woff|ttf|json)(\?|$)/i.test(url)) return;
         if (latestAudioUrl === url) return;
         debugLog('Captured audio URL:', url);
         latestAudioUrl = url;
@@ -189,31 +191,41 @@
     }
 
     function hookMediaPlayback() {
-        // Catch audio elements starting playback
+        // Catch audio elements starting playback (fires after autoplay too)
         document.addEventListener('play', (ev) => {
             const el = ev.target;
             if (el && (el.tagName === 'AUDIO' || el.tagName === 'VIDEO')) {
                 const src = el.currentSrc || el.src;
                 if (src) {
                     debugLog('Media play event, src:', src);
-                    // For audio elements, accept any http src
-                    if (src.startsWith('http') && !/\.(jpg|jpeg|png|gif|webp|svg|css|js)(\?|$)/i.test(src)) {
-                        latestAudioUrl = src;
-                        setStatus('已捕获音频链接（播放事件）✓');
-                    }
+                    setAudioUrl(src);
                 }
             }
         }, true);
+        // Also catch canplay / loadedmetadata which fire even before play on autoplay
+        for (const evt of ['loadedmetadata', 'canplay']) {
+            document.addEventListener(evt, (ev) => {
+                const el = ev.target;
+                if (el && (el.tagName === 'AUDIO' || el.tagName === 'VIDEO')) {
+                    const src = el.currentSrc || el.src;
+                    if (src) setAudioUrl(src);
+                }
+            }, true);
+        }
     }
 
     function scanAudioElements(root = document) {
-        const nodes = root.querySelectorAll('audio, audio source');
+        const nodes = root.querySelectorAll('audio, audio source, source');
         nodes.forEach(node => {
-            const src = node.currentSrc || node.getAttribute('src') || node.src;
+            // Prefer currentSrc (resolved after load), fall back to src attribute
+            const src = node.currentSrc || node.getAttribute('src') || node.src || '';
             if (src && src.startsWith('http')) {
                 debugLog('Found audio element:', src);
-                latestAudioUrl = src;
-                setStatus('已捕获音频链接（DOM元素）✓');
+                setAudioUrl(src);
+                // If setAudioUrl accepted it, update status
+                if (latestAudioUrl === src) {
+                    setStatus('已捕获音频链接（DOM元素）✓');
+                }
             }
         });
     }
