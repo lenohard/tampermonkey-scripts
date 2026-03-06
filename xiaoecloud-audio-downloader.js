@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         小鹅通音频下载助手
 // @namespace    http://tampermonkey.net/
-// @version      2.1.0
+// @version      2.2.0
 // @description  小鹅通课程音频下载：支持选集下载、批量下载、描述文件保存
 // @author       lenohard
 // @match        https://*.xiaoeknow.com/p/course/audio*
@@ -242,7 +242,6 @@
 
     let panelEl, listEl, statusEl;
     let chapters = [];   // { resource_id, title, checked, audioUrl, state: ''|'loading'|'done'|'failed' }
-    let downloadDesc = true;
     let isBusy = false;
 
     function setStatus(msg, color = '#555') {
@@ -308,7 +307,8 @@
         }
     }
 
-    async function downloadSelected() {
+    // mode: 'audio' | 'desc' | 'both'
+    async function downloadSelected(mode = 'both') {
         if (isBusy) return;
         const selected = chapters.filter(c => c.checked);
         if (!selected.length) { setStatus('请先勾选章节', '#e65100'); return; }
@@ -325,25 +325,29 @@
             setStatus(`(${doneCount + failCount + 1}/${selected.length}) 处理：${ch.title}`, '#1565c0');
 
             try {
-                // 1. Fetch audio URL if not cached
-                if (!ch.audioUrl) {
+                const needAudio = mode === 'audio' || mode === 'both';
+                const needDesc  = mode === 'desc'  || mode === 'both';
+
+                // Fetch audio URL only when needed
+                if (needAudio && !ch.audioUrl) {
                     const info = await fetchAudioInfo(ch.resource_id, params.product_id);
                     ch.audioUrl = info.audio_url || '';
                     if (!ch.audioUrl) throw new Error('API 未返回 audio_url');
                 }
 
-                // 2. Save description (.desc) — content is the chapter title
-                //    (API has no separate description field for this course type)
-                if (downloadDesc) {
+                // Save .desc — content is chapter title
+                if (needDesc) {
                     const descFile = `${TARGET_DIR}${sanitize(ch.title)}.desc`;
                     await downloadText(ch.title, descFile);
                 }
 
-                // 3. Download audio
-                const extMatch = ch.audioUrl.match(/\.(mp3|m4a|aac|wav|ogg|flac)(\?|$)/i);
-                const ext = extMatch ? extMatch[1].toLowerCase() : 'mp3';
-                const audioFile = `${TARGET_DIR}${sanitize(ch.title)}.${ext}`;
-                await downloadAudio(ch.audioUrl, audioFile);
+                // Download audio
+                if (needAudio) {
+                    const extMatch = ch.audioUrl.match(/\.(mp3|m4a|aac|wav|ogg|flac)(\?|$)/i);
+                    const ext = extMatch ? extMatch[1].toLowerCase() : 'mp3';
+                    const audioFile = `${TARGET_DIR}${sanitize(ch.title)}.${ext}`;
+                    await downloadAudio(ch.audioUrl, audioFile);
+                }
 
                 updateChapterState(i, 'done');
                 doneCount++;
@@ -378,13 +382,12 @@
             </div>
             <div class="xe-toolbar">
                 <button class="xe-btn xe-btn-blue" id="xe-load">加载章节</button>
-                <button class="xe-btn xe-btn-green" id="xe-dl-sel">下载选中</button>
+                <button class="xe-btn xe-btn-green" id="xe-dl-both">下载音频+描述</button>
+                <button class="xe-btn xe-btn-green" id="xe-dl-audio">仅下载音频</button>
+                <button class="xe-btn xe-btn-purple" id="xe-dl-desc">仅下载描述</button>
                 <button class="xe-btn xe-btn-gray" id="xe-sel-all">全选</button>
                 <button class="xe-btn xe-btn-gray" id="xe-sel-none">全不选</button>
                 <button class="xe-btn xe-btn-orange" id="xe-copy">复制当前链接</button>
-            </div>
-            <div class="xe-options">
-                <label><input type="checkbox" id="xe-opt-desc" checked> 同时下载描述(.desc)</label>
             </div>
             <div class="xe-chapter-list" id="xe-chapter-list">
                 <div style="padding:16px;color:#999;text-align:center">点击「加载章节」获取列表</div>
@@ -400,7 +403,9 @@
             panelEl.style.display = 'none';
         });
         panelEl.querySelector('#xe-load').addEventListener('click', loadChapters);
-        panelEl.querySelector('#xe-dl-sel').addEventListener('click', downloadSelected);
+        panelEl.querySelector('#xe-dl-both').addEventListener('click', () => downloadSelected('both'));
+        panelEl.querySelector('#xe-dl-audio').addEventListener('click', () => downloadSelected('audio'));
+        panelEl.querySelector('#xe-dl-desc').addEventListener('click', () => downloadSelected('desc'));
         panelEl.querySelector('#xe-sel-all').addEventListener('click', () => {
             chapters.forEach(c => c.checked = true);
             renderList();
@@ -408,9 +413,6 @@
         panelEl.querySelector('#xe-sel-none').addEventListener('click', () => {
             chapters.forEach(c => c.checked = false);
             renderList();
-        });
-        panelEl.querySelector('#xe-opt-desc').addEventListener('change', (e) => {
-            downloadDesc = e.target.checked;
         });
         panelEl.querySelector('#xe-copy').addEventListener('click', async () => {
             // Try to get current page audio URL via audio.info.get
