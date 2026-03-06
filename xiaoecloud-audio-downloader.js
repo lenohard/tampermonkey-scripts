@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         小鹅通音频下载助手
 // @namespace    http://tampermonkey.net/
-// @version      2.3.0
+// @version      2.3.1
 // @description  小鹅通课程音频下载：支持选集下载、批量下载、描述文件保存
 // @author       lenohard
 // @match        https://*.xiaoeknow.com/p/course/audio*
@@ -170,23 +170,21 @@
     }
 
     function downloadText(content, filename) {
-        // GM_download blocks data: and blob: URIs by default (not_whitelisted).
-        // Use anchor-click + blob URL instead — bypasses GM_download entirely.
-        // Limitation: browser security prevents subdirectory paths in anchor downloads,
-        // so the file lands in the browser's root download folder with the full
-        // sanitized filename (subdirs replaced with space).
+        // GM_download blocks data:/blob: URIs (not_whitelisted).
+        // Anchor-click in Tampermonkey sandbox DOM also won't trigger real downloads.
+        // Solution: use unsafeWindow.document (the real page DOM) for anchor click.
         return new Promise((resolve) => {
             try {
+                const realDoc = unsafeWindow.document;
                 const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
                 const burl = URL.createObjectURL(blob);
-                const a = document.createElement('a');
+                const a = realDoc.createElement('a');
                 a.href = burl;
-                // Use only the basename — browsers strip path separators anyway
-                a.download = sanitize(filename.split('/').filter(Boolean).pop() || 'desc') + '.desc';
+                a.download = filename;
                 a.style.display = 'none';
-                document.body.appendChild(a);
+                realDoc.body.appendChild(a);
                 a.click();
-                document.body.removeChild(a);
+                realDoc.body.removeChild(a);
                 setTimeout(() => { URL.revokeObjectURL(burl); resolve(); }, 500);
             } catch (e) {
                 log('downloadText error:', e);
