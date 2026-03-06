@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         小鹅通音频下载助手
 // @namespace    http://tampermonkey.net/
-// @version      2.2.1
+// @version      2.3.0
 // @description  小鹅通课程音频下载：支持选集下载、批量下载、描述文件保存
 // @author       lenohard
 // @match        https://*.xiaoeknow.com/p/course/audio*
@@ -110,6 +110,36 @@
         return res.data.list || [];
     }
 
+    /** Fetch chapter description (org_content HTML → plain text) */
+    async function fetchDetail(resource_id, product_id) {
+        const form = encodeForm({
+            'bizData[resource_id]': resource_id,
+            'bizData[product_id]': product_id,
+        });
+        const res = await gmPost(
+            `${BASE}/xe.course.business.get.detail/2.0.0`,
+            form
+        );
+        if (res.code !== 0) throw new Error(`detail API error ${res.code}: ${res.msg}`);
+        const html = res.data.org_content || '';
+        return htmlToText(html);
+    }
+
+    /** Strip HTML tags and decode entities to plain text */
+    function htmlToText(html) {
+        // <br> → newline, <p> closing → newline
+        let text = html
+            .replace(/<br\s*\/?>/gi, '\n')
+            .replace(/<\/p>/gi, '\n')
+            .replace(/<[^>]+>/g, '');
+        // Decode HTML entities via DOM
+        const ta = document.createElement('textarea');
+        ta.innerHTML = text;
+        text = ta.value;
+        // Collapse 3+ newlines to 2
+        return text.replace(/\n{3,}/g, '\n\n').trim();
+    }
+
     /** Fetch audio URL for a single resource */
     async function fetchAudioInfo(resource_id, product_id) {
         const form = encodeForm({
@@ -140,24 +170,24 @@
     }
 
     function downloadText(content, filename) {
-        // GM_download does NOT support blob: URLs (sandboxed).
-        // Use data: URI with base64-encoded UTF-8 bytes — handles CJK correctly.
+        // GM_download blocks data: and blob: URIs by default (not_whitelisted).
+        // Use anchor-click + blob URL instead — bypasses GM_download entirely.
+        // Limitation: browser security prevents subdirectory paths in anchor downloads,
+        // so the file lands in the browser's root download folder with the full
+        // sanitized filename (subdirs replaced with space).
         return new Promise((resolve) => {
             try {
-                // Encode to UTF-8 bytes then base64
-                const utf8Bytes = new TextEncoder().encode(content);
-                const base64 = btoa(String.fromCharCode(...utf8Bytes));
-                const dataUrl = `data:text/plain;charset=utf-8;base64,${base64}`;
-                GM_download({
-                    url: dataUrl,
-                    name: filename,
-                    saveAs: false,
-                    onload: () => { log('desc saved:', filename); resolve(); },
-                    onerror: (err) => {
-                        log('GM_download desc failed:', err, filename);
-                        resolve(); // never block the batch
-                    },
-                });
+                const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+                const burl = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = burl;
+                // Use only the basename — browsers strip path separators anyway
+                a.download = sanitize(filename.split('/').filter(Boolean).pop() || 'desc') + '.desc';
+                a.style.display = 'none';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                setTimeout(() => { URL.revokeObjectURL(burl); resolve(); }, 500);
             } catch (e) {
                 log('downloadText error:', e);
                 resolve();
@@ -326,10 +356,11 @@
                     if (!ch.audioUrl) throw new Error('API 未返回 audio_url');
                 }
 
-                // Save .desc — content is chapter title
+                // Save .desc — fetch real description from detail API
                 if (needDesc) {
+                    const descContent = await fetchDetail(ch.resource_id, params.product_id);
                     const descFile = `${TARGET_DIR}${sanitize(ch.title)}.desc`;
-                    await downloadText(ch.title, descFile);
+                    await downloadText(descContent, descFile);
                 }
 
                 // Download audio
