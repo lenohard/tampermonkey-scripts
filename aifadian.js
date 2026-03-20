@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         爱发电&四季办公室音频下载助手
 // @namespace    http://tampermonkey.net/
-// @version      1.1
+// @version      1.2
 // @description  从爱发电专辑页面和四季办公室(siji.typlog.io)提取音频并提供下载功能
 // @author       Your name
 // @match        https://afdian.com/album/*
@@ -352,6 +352,10 @@
                         }
                     }
 
+                    // 获取描述文本（<pre class="vm-pre-box">）
+                    const preElement = feed.querySelector('pre.vm-pre-box');
+                    const descText = preElement ? preElement.textContent.trim() : '';
+
                     // 如果找到音频元素且有src，添加到列表
                     if (audioElement && (audioElement.src || (audioElement.tagName === 'SOURCE' && audioElement.src))) {
                         const audioUrl = audioElement.src || (audioElement.tagName === 'SOURCE' ? audioElement.src : null);
@@ -360,6 +364,7 @@
                                 title: title,
                                 url: audioUrl,
                                 element: audioElement,
+                                descText: descText,
                                 index: index + 1
                             });
                         }
@@ -453,8 +458,55 @@
         });
     }
 
-    // 批量下载所有音频
-    async function batchDownload() {
+    // 用 <a> 标签触发 blob 下载（绕过 GM_download 不支持 blob URL 的限制）
+    function triggerBlobDownload(text, filename) {
+        const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        // GM_download 用子目录路径，但 <a download> 只支持纯文件名
+        // 取最后一段作为文件名
+        a.download = filename.split('/').pop();
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    // 下载描述文本文件
+    function downloadDesc(audioInfo) {
+        if (!audioInfo.descText) {
+            showStatus(`⚠️ 没有描述文本: ${audioInfo.title}`, 'info');
+            return;
+        }
+
+        try {
+            const sanitizedTitle = audioInfo.title.replace(/[\/\\:*?"<>|]/g, '-');
+            triggerBlobDownload(audioInfo.descText, `${sanitizedTitle}.desc`);
+            showStatus(`✅ 描述已触发下载: ${audioInfo.title}`, 'success');
+        } catch (error) {
+            showStatus(`❌ 描述下载出错: ${audioInfo.title} - ${error.message}`, 'error');
+        }
+    }
+
+    // 下载描述文本文件（异步版本，用于批量下载）
+    function downloadDescAsync(audioInfo) {
+        return new Promise((resolve) => {
+            if (!audioInfo.descText) {
+                resolve();
+                return;
+            }
+            try {
+                downloadDesc(audioInfo);
+            } catch (error) {
+                showStatus(`❌ 描述下载出错: ${audioInfo.title} - ${error.message}`, 'error');
+            }
+            resolve();
+        });
+    }
+
+    // 批量下载所有音频（mode: 'audio' | 'desc' | 'both'）
+    async function batchDownload(mode = 'audio') {
         if (audioList.length === 0) {
             showStatus('❌ 没有找到可下载的音频', 'error');
             return;
@@ -462,7 +514,9 @@
 
         const sanitizedParentFolder = parentFolderName.replace(/[\/\\:*?"<>|]/g, '-');
         const sanitizedAlbumTitle = albumTitle.replace(/[\/\\:*?"<>|]/g, '-');
-        showStatus(`🚀 开始批量下载 ${audioList.length} 个音频...`, 'info');
+
+        const modeLabel = mode === 'desc' ? '描述文件' : mode === 'both' ? '音频+描述' : '音频';
+        showStatus(`🚀 开始批量下载 ${audioList.length} 个${modeLabel}...`, 'info');
 
         if (currentSite === 'siji') {
             showStatus(`📁 文件将保存到: 下载文件夹/四季办公室/`, 'info');
@@ -474,8 +528,12 @@
             const audioInfo = audioList[i];
             showStatus(`⏬ 正在下载 (${i + 1}/${audioList.length}): ${audioInfo.title}`, 'info');
 
-            // 等待当前下载完成再开始下一个
-            await downloadAudioAsync(audioInfo);
+            if (mode === 'audio' || mode === 'both') {
+                await downloadAudioAsync(audioInfo);
+            }
+            if (mode === 'desc' || mode === 'both') {
+                await downloadDescAsync(audioInfo);
+            }
 
             // 下载完成后等待2秒再开始下一个
             if (i < audioList.length - 1) {
@@ -484,7 +542,7 @@
             }
         }
 
-        showStatus(`🎉 所有音频下载完成！`, 'success');
+        showStatus(`🎉 所有${modeLabel}下载完成！`, 'success');
     }
 
     // 创建下载面板
@@ -512,12 +570,32 @@
         }
         content.appendChild(pathInfo);
 
-        // 批量下载按钮
+        // 批量下载按钮区域
+        const batchBtnWrap = document.createElement('div');
+        batchBtnWrap.style.cssText = 'display:flex;gap:6px;margin-bottom:6px;';
+
         const batchBtn = document.createElement('button');
         batchBtn.className = 'batch-download';
-        batchBtn.textContent = `🚀 批量下载全部 (${audioList.length} 个音频)`;
-        batchBtn.addEventListener('click', batchDownload);
-        content.appendChild(batchBtn);
+        batchBtn.style.cssText = 'flex:1;margin:0;padding:10px 6px;white-space:nowrap;';
+        batchBtn.textContent = `🚀 批量下载全部音频 (${audioList.length})`;
+        batchBtn.addEventListener('click', () => batchDownload('audio'));
+        batchBtnWrap.appendChild(batchBtn);
+
+        const batchDescBtn = document.createElement('button');
+        batchDescBtn.className = 'batch-download';
+        batchDescBtn.style.cssText = 'flex:1;margin:0;padding:10px 6px;background:#6f42c1;white-space:nowrap;';
+        batchDescBtn.textContent = `📝 批量下载全部描述 (${audioList.length})`;
+        batchDescBtn.addEventListener('click', () => batchDownload('desc'));
+        batchBtnWrap.appendChild(batchDescBtn);
+
+        content.appendChild(batchBtnWrap);
+
+        const batchBothBtn = document.createElement('button');
+        batchBothBtn.className = 'batch-download';
+        batchBothBtn.style.cssText = 'background:#fd7e14;margin-bottom:6px;white-space:nowrap;';
+        batchBothBtn.textContent = `⬇️ 批量下载全部（音频+描述）(${audioList.length})`;
+        batchBothBtn.addEventListener('click', () => batchDownload('both'));
+        content.appendChild(batchBothBtn);
 
         // 打开下载文件夹按钮
         const openFolderBtn = document.createElement('button');
@@ -555,12 +633,22 @@
 
             const downloadBtn = document.createElement('button');
             downloadBtn.className = 'download-btn';
-            downloadBtn.textContent = '下载';
+            downloadBtn.textContent = '下载音频';
             downloadBtn.addEventListener('click', () => {
                 downloadAudio(audioInfo);
             });
-
             controls.appendChild(downloadBtn);
+
+            if (audioInfo.descText) {
+                const descBtn = document.createElement('button');
+                descBtn.className = 'download-btn';
+                descBtn.style.background = '#6f42c1';
+                descBtn.textContent = '下载描述';
+                descBtn.addEventListener('click', () => {
+                    downloadDesc(audioInfo);
+                });
+                controls.appendChild(descBtn);
+            }
 
             item.appendChild(title);
             item.appendChild(controls);
