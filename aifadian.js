@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         爱发电&四季办公室音频下载助手
 // @namespace    http://tampermonkey.net/
-// @version      1.2
+// @version      1.3
 // @description  从爱发电专辑页面和四季办公室(siji.typlog.io)提取音频并提供下载功能
 // @author       Your name
 // @match        https://afdian.com/album/*
+// @match        https://ifdian.net/a/*
 // @match        https://siji.typlog.io/episodes/*
 // @grant        GM_download
 // @grant        GM_setValue
@@ -27,6 +28,8 @@
         const hostname = window.location.hostname;
         if (hostname.includes('afdian.com')) {
             currentSite = 'afdian';
+        } else if (hostname.includes('ifdian.net')) {
+            currentSite = 'ifdian-feed';
         } else if (hostname.includes('siji.typlog.io')) {
             currentSite = 'siji';
         }
@@ -81,12 +84,15 @@
             align-items: center;
         }
 
-        .panel-close {
+        .panel-close, .panel-refresh {
             background: none;
             border: none;
             font-size: 18px;
             cursor: pointer;
             color: #666;
+        }
+        .panel-refresh:hover {
+            color: #007bff;
         }
 
         .panel-content {
@@ -213,6 +219,16 @@
             return '四季办公室';
         }
 
+        if (currentSite === 'ifdian-feed') {
+            try {
+                const authorEl = document.querySelector('.avatar-name');
+                return authorEl ? authorEl.textContent.trim() : '未知作者';
+            } catch (error) {
+                console.error('获取作者名称失败:', error);
+                return '未知作者';
+            }
+        }
+
         try {
             const parentElement = document.querySelector('#app > div.wrapper.app-view > div > section.page-content-w100 > div > div.content-left.max-width-320 > div > section > div.flex-box.flex-center.flex-align-items-center.mt16 > div > div.flex-box.flex-justify-content-center.flex-direction-column.avatar-content.flex-item-1 > div.user-name.flex-box.flex-justify-content-space-between.flex-align-items-center > span > a');
             return parentElement ? parentElement.textContent.trim() : '未知作者';
@@ -245,6 +261,11 @@
             }
         }
 
+        if (currentSite === 'ifdian-feed') {
+            const pageTitle = document.title;
+            return pageTitle ? pageTitle.replace(/[-–—|].*$/, '').trim() || '动态音频' : '动态音频';
+        }
+
         try {
             const albumElement = document.querySelector('#app > div.wrapper.app-view > div > section.page-content-w100 > div > div.content-left.max-width-320 > div > section > a');
             return albumElement ? albumElement.textContent.trim() : '未知专辑';
@@ -262,7 +283,7 @@
 
         if (currentSite === 'siji') {
             extractSijiAudioInfo();
-        } else if (currentSite === 'afdian') {
+        } else if (currentSite === 'afdian' || currentSite === 'ifdian-feed') {
             extractAfdianAudioInfo();
         }
     }
@@ -309,13 +330,17 @@
     // 提取爱发电音频信息
     function extractAfdianAudioInfo() {
         try {
+            // 专辑页有 .vm-block-feed 容器；feed页直接查找 .vm-feed
             const feedContainer = document.querySelector('.vm-block-feed');
-            if (!feedContainer) {
-                console.error('未找到音频容器');
+            const feeds = feedContainer
+                ? feedContainer.querySelectorAll('.vm-feed')
+                : document.querySelectorAll('.vm-feed');
+
+            if (feeds.length === 0) {
+                console.error('未找到音频项目');
                 return;
             }
 
-            const feeds = feedContainer.querySelectorAll('.vm-feed');
             console.log(`找到 ${feeds.length} 个音频项目`);
 
             feeds.forEach((feed, index) => {
@@ -554,7 +579,10 @@
         header.className = 'panel-header';
         header.innerHTML = `
             <span>音频下载助手 (${parentFolderName} - ${albumTitle})</span>
-            <button class="panel-close">&times;</button>
+            <div style="display:flex;gap:8px;align-items:center">
+                <button class="panel-refresh" title="重新扫描页面音频">🔄</button>
+                <button class="panel-close">&times;</button>
+            </div>
         `;
 
         const content = document.createElement('div');
@@ -663,6 +691,14 @@
             panel.remove();
         });
 
+        // 刷新按钮：重新扫描后重建面板
+        header.querySelector('.panel-refresh').addEventListener('click', () => {
+            panel.remove();
+            extractAudioInfo();
+            createDownloadPanel();
+            showStatus(`🔄 已刷新，发现 ${audioList.length} 个音频`, 'success');
+        });
+
         document.body.appendChild(panel);
     }
 
@@ -731,7 +767,7 @@
                     console.log('下载链接元素:', document.querySelector('.shk-btn_download'));
                 }
             } else if (currentSite === 'afdian') {
-                // 爱发电：等待页面加载完成
+                // 爱发电专辑页面：等待页面加载完成
                 await waitForElement('.vm-block-feed', 15000);
 
                 // 自动滚动加载所有内容
@@ -755,6 +791,21 @@
                         console.log('音频feed元素:', document.querySelectorAll('.vm-feed').length);
                     }
                 }, 2000);
+            } else if (currentSite === 'ifdian-feed') {
+                // ifdian feed页面：不滚动，直接等待第一批feed加载完即可
+                console.log('ifdian feed页面启动...');
+                await waitForElement('.vm-feed', 15000);
+                // 再等一小段让音频元素渲染
+                await new Promise(r => setTimeout(r, 1000));
+                extractAudioInfo();
+                if (audioList.length > 0) {
+                    console.log(`成功提取 ${audioList.length} 个音频文件`);
+                    createDownloadPanel();
+                    showStatus(`发现 ${audioList.length} 个音频文件`, 'success');
+                } else {
+                    console.log('未找到音频文件，检查页面结构...');
+                    console.log('vm-feed元素数量:', document.querySelectorAll('.vm-feed').length);
+                }
             } else {
                 console.log('未识别的网站，无法处理');
             }
